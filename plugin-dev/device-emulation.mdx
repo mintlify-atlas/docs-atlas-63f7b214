@@ -1,0 +1,228 @@
+---
+title: "Device Emulation"
+description: "Record and replay device interactions for CI testing without physical hardware"
+---
+
+## What is device emulation?
+
+Device emulation lets you record the USB control, interrupt, and bulk transfers sent to and received from a device, then replay that recorded history without the physical hardware connected. This makes it possible to run full firmware update tests in CI at scale, well beyond what is practical with a rack of physical devices.
+
+Three common challenges make emulation slightly more complex than a naive replay:
+
+- Devices sometimes detach into a different "bootloader" device with a new VID:PID.
+- Devices may be composite — multiple logical devices inside one physical unit.
+- Device responses are sometimes non-deterministic (queries processed out of order).
+
+fwupd's emulation system handles all three cases. Emulation state is loaded and saved over D-Bus so the running daemon does not need to be modified.
+
+## When to use it
+
+<CardGroup cols={2}>
+  <Card title="CI at scale" icon="server">
+    When you have more device models than you can keep physically connected to test runners.
+  </Card>
+  <Card title="Plugin development" icon="code">
+    When you are developing a plugin and the hardware is not yet available or you want to reduce write cycles.
+  </Card>
+  <Card title="Regression testing" icon="shield-check">
+    When you want to verify that a firmware update still works as the software stack changes.
+  </Card>
+  <Card title="Pcap-first development" icon="file">
+    When you captured USB traffic with WireShark before fwupd supported the hardware.
+  </Card>
+</CardGroup>
+
+## Recording a hotplugged device
+
+Use this flow when the device can be physically disconnected and reconnected (e.g. a USB device that detaches cleanly).
+
+<Steps>
+  <Step title="Tag the device for recording">
+    Connect the device, then tag it using its device ID or GUID:
+
+    ```bash
+    # tag by device ID
+    fwupdmgr emulation-tag b0a78eb71f4eeea7df8fb114522556ba8ce22074
+    # or by GUID
+    fwupdmgr emulation-tag 2082b5e0-7a64-478a-b1b2-e3404fab6dad
+    ```
+  </Step>
+  <Step title="Remove and re-insert the device">
+    Physically unplug and replug the device so the daemon captures the setup events. Confirm recording is active:
+
+    ```bash
+    fwupdmgr get-devices --filter emulation-tag
+    ```
+  </Step>
+  <Step title="Perform the firmware update">
+    Download and install firmware as you normally would:
+
+    ```bash
+    fwupdmgr download https://fwupd.org/downloads/170f2c19f17b7819644d3fcc7617621cc3350a04-hughski-colorhug2-2.0.6.cab
+    fwupdmgr install 17*.cab --allow-reinstall
+    ```
+  </Step>
+  <Step title="Save the emulation data">
+    Dump all recorded events into a zip file:
+
+    ```bash
+    fwupdmgr emulation-save colorhug.zip
+    ```
+  </Step>
+</Steps>
+
+## Recording a persistent device
+
+Use this flow when the device cannot be hotplugged — it requires a daemon restart to capture setup events.
+
+<Steps>
+  <Step title="Tag the device">
+    ```bash
+    # by device ID
+    fwupdmgr emulation-tag 02b7ba3cca857b7e1e10a2f7a6767ae5ec76a331
+    # or by GUID
+    fwupdmgr emulation-tag 310f81b5-6fce-501e-acfb-487d10501e78
+    ```
+  </Step>
+  <Step title="Restart the daemon">
+    ```bash
+    fwupdmgr quit
+    fwupdmgr get-devices
+    ```
+
+    <Note>
+      If you are running inside the fwupd development environment, D-Bus activation does not work. Restart the daemon manually in a separate terminal.
+    </Note>
+  </Step>
+  <Step title="Perform the firmware update">
+    Run the update as normal, then save the recorded data:
+
+    ```bash
+    fwupdmgr install 17*.cab --allow-reinstall
+    fwupdmgr emulation-save colorhug.zip
+    ```
+  </Step>
+</Steps>
+
+## Testing with emulation data
+
+Once you have a `.zip` recording, remove the physical device and verify the emulation works:
+
+```bash
+fwupdmgr emulation-load colorhug.zip
+fwupdmgr get-devices --filter emulated
+fwupdmgr install 17*.cab --allow-reinstall
+```
+
+The `--filter emulated` flag shows only devices that are being emulated by the daemon.
+
+## Enumeration-only emulation
+
+Rather than emulating a complete firmware update, you can emulate just the device enumeration. This is useful because:
+
+- It runs as part of a quick installed-test on user systems with no internet access required.
+- It does not require redistributable firmware files to be uploaded to LVFS.
+
+To create enumeration-only data, tag the device and trigger setup events as above, then extract just the setup phase:
+
+```bash
+fwupdmgr emulation-save emulation.zip
+unzip emulation.zip
+mv setup.json tests/plugin-setup.json
+```
+
+Add an `emulation-file` section to your device-test `.json` to reference the setup file.
+
+## Uploading emulation data to LVFS
+
+You can attach emulation data to a firmware release on LVFS so CI jobs can download it automatically:
+
+1. Open the firmware release page on LVFS.
+2. Navigate to the **Assets** tab.
+3. Use the upload button to upload the `.zip` file.
+4. Copy the resulting URL — use it as the `emulation-url` parameter in your device-test JSON.
+
+## Running device tests
+
+Device tests integrate emulation data directly into the CI test runner. A test step that specifies `emulation-url` will load the emulation data before running that step, allowing the test to proceed without hardware.
+
+```bash
+fwupdmgr device-emulate ../data/device-tests/hughski-colorhug2.json
+```
+
+Example output:
+
+```text
+Decompressing…           [***************************************]
+Waiting…                 [***************************************]
+Hughski ColorHug2: OK!
+Decompressing…           [***************************************]
+Waiting…                 [***************************************]
+Hughski ColorHug2: OK!
+```
+
+<Note>
+  Device tests without emulation data are skipped automatically.
+</Note>
+
+## Converting pcap files to emulation files
+
+If you captured USB traffic with WireShark before fwupd supported the hardware, you can convert a `.pcap` file into an emulation zip using the `contrib/pcap2emulation.py` script.
+
+### Capture USB traffic on Linux
+
+<Steps>
+  <Step title="Check WireShark group membership">
+    ```bash
+    groups $USER
+    ```
+
+    If you are not in the `wireshark` group, add yourself and log out/in:
+
+    ```bash
+    sudo usermod -a -G wireshark $USER
+    ```
+  </Step>
+  <Step title="Load the USBmon kernel module">
+    ```bash
+    sudo modprobe usbmon
+    ```
+
+    If your distribution creates usbmon instances without the right permissions:
+
+    ```bash
+    echo 'SUBSYSTEM=="usbmon", GROUP="wireshark", MODE="640"' | sudo tee /etc/udev/rules.d/50-accessible-usbmon.rules
+    sudo udevadm control --reload-rules
+    sudo udevadm trigger
+    ```
+  </Step>
+  <Step title="Record traffic in WireShark">
+    Open **Capture → Options…** (Ctrl+K) and select the `usbmon` interface. On Windows, select the `USBPcap` interface instead.
+
+    For large firmware payloads, increase the **Snaplen** value for the selected interface.
+
+    Click **Start**, plug in the device, and run the vendor firmware update tool. Save the resulting file as a `.pcap` or `.pcapng` file.
+  </Step>
+</Steps>
+
+### Convert the pcap file
+
+```bash
+# convert a CalDigit dock capture (VID:PID 0451:ace1)
+contrib/pcap2emulation.py CalDigit.pcapng /tmp/caldigit 0451:ace1
+# this generates /tmp/caldigit.zip
+
+# load and verify
+fwupdmgr emulation-load /tmp/caldigit.zip
+fwupdmgr get-devices --filter emulated
+```
+
+The script generates two or three phase files (`setup.json`, `install.json`, `reload.json`) depending on whether the device reboots into a separate bootloader, and packages them into the zip.
+
+## GNOME Firmware GUI support
+
+GNOME Firmware 48 and newer includes built-in support for tagging devices, triggering updates, and loading/saving emulation files — no command line required.
+
+<Tip>
+  Use GNOME Firmware's emulation workflow when demonstrating the record/replay cycle to hardware vendors who are less comfortable with the terminal.
+</Tip>

@@ -1,0 +1,112 @@
+{
+  "projectType": "general",
+  "projectName": "fwupd",
+  "projectDescription": "A system daemon that enables automatic, safe, and reliable firmware updates on Linux via the Linux Vendor Firmware Service (LVFS).",
+  "theme": "aspen",
+  "primaryColor": "#1c71d8",
+  "lightColor": "#3584e4",
+  "darkColor": "#1a5fb4",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "User Guide",
+            "pages": [
+              "user-guide/fwupdmgr",
+              "user-guide/lvfs-remotes",
+              "user-guide/bios-settings",
+              "user-guide/enterprise"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/daemon-config",
+              "configuration/remotes",
+              "configuration/environment-variables"
+            ]
+          },
+          {
+            "group": "Platform Security",
+            "pages": [
+              "security/hsi",
+              "security/uefi-secure-boot"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Plugin Development",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "plugin-dev/building",
+              "plugin-dev/architecture"
+            ]
+          },
+          {
+            "group": "Writing Plugins",
+            "pages": [
+              "plugin-dev/tutorial",
+              "plugin-dev/device-types",
+              "plugin-dev/firmware-types",
+              "plugin-dev/quirks"
+            ]
+          },
+          {
+            "group": "Advanced Topics",
+            "pages": [
+              "plugin-dev/device-emulation",
+              "plugin-dev/debugging",
+              "plugin-dev/windows"
+            ]
+          },
+          {
+            "group": "API Reference",
+            "pages": [
+              "api/libfwupd",
+              "api/libfwupdplugin"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Automatic firmware updates via the Linux Vendor Firmware Service (LVFS)",
+    "Support for 100+ device types including USB, NVMe, Thunderbolt, UEFI capsule, and more",
+    "Plugin architecture enabling vendor-specific update protocols",
+    "Host Security ID (HSI) for firmware security posture evaluation",
+    "BIOS settings management via kernel firmware-attributes API",
+    "Device emulation for regression testing without physical hardware",
+    "D-Bus interface for GUI frontends (GNOME Software, KDE Discover, etc.)",
+    "Enterprise firmware approval and best-known-configuration (BKC) support",
+    "Cross-platform support including Windows (subset of plugins)",
+    "Peer-to-peer metadata sharing via Passim to reduce bandwidth"
+  ],
+  "publicApiSurface": [
+    "FwupdClient — D-Bus client for interacting with the fwupd daemon",
+    "FwupdDevice — Represents a device managed by fwupd",
+    "FwupdRelease — Represents a firmware release available for a device",
+    "FwupdRemote — Represents a metadata source (e.g. LVFS)",
+    "FwupdSecurityAttr — Represents a host security attribute (HSI)",
+    "FwupdBiosSetting — Represents a BIOS firmware setting",
+    "FuPlugin — Base class for all fwupd plugins",
+    "FuDevice — Base class for all devices managed by plugins",
+    "FuFirmware — Base class for firmware file parsers",
+    "FuUdevDevice / FuUsbDevice / FuBluezDevice — Device base types",
+    "fwupdmgr — CLI client for end users",
+    "fwupdtool — Standalone CLI for plugin developers and debugging",
+    "org.freedesktop.fwupd — D-Bus service interface"
+  ]
+}

@@ -1,0 +1,120 @@
+---
+title: "UEFI Secure Boot"
+description: "How fwupd interacts with UEFI Secure Boot and the EFI system partition"
+---
+
+## Overview
+
+UEFI Secure Boot is a firmware security feature that ensures only cryptographically signed bootloaders and EFI binaries can execute during the boot process. fwupd interacts with Secure Boot in two ways: it must respect Secure Boot when delivering UEFI capsule updates, and it monitors Secure Boot status as part of the [Host Security ID (HSI)](/security/hsi) rating.
+
+## How fwupd delivers UEFI capsule updates
+
+When a UEFI capsule update is scheduled, fwupd stages the firmware payload on the **EFI system partition (ESP)** and arranges for it to be applied on the next reboot. The ESP is a FAT-formatted partition that the UEFI firmware reads during boot, typically mounted at `/boot/efi`, `/boot`, or `/efi`.
+
+fwupd supports two delivery methods for capsule updates:
+
+<AccordionGroup>
+  <Accordion title="Capsule-on-Disk (preferred)">
+    Defined in UEFI specification §8.5.5, Capsule-on-Disk places the capsule file at `\EFI\UpdateCapsule\` on the ESP. The firmware processes it on the next reboot without any EFI helper binary.
+
+    fwupd sets the `EFI_OS_INDICATIONS_FILE_CAPSULE_DELIVERY_SUPPORTED` flag in the `OsIndications` EFI variable to signal to the firmware that a capsule is ready. When the firmware supports this method, it is the preferred delivery path.
+
+    You can disable Capsule-on-Disk via the `DisableCapsuleUpdateOnDisk` option in the `[uefi_capsule]` section of `/etc/fwupd/fwupd.conf` if you need to work around a firmware compatibility issue.
+  </Accordion>
+
+  <Accordion title="NVRAM / BootNext method">
+    When Capsule-on-Disk is not available, fwupd uses the `fwupd*.efi` companion binary. It sets the EFI `BootNext` variable (creating a new boot entry if needed) to chain into the fwupd EFI application on the next reboot. The EFI application then flashes the staged capsule.
+
+    This method requires the companion binary from the [fwupd-efi](https://github.com/fwupd/fwupd-efi) project (or a third-party bootloader that implements the fwupd capsule update protocol).
+  </Accordion>
+</AccordionGroup>
+
+## The shim requirement for Secure Boot
+
+When Secure Boot is active, every EFI binary that executes must be signed by a key trusted by the firmware. The `fwupd*.efi` binary is signed with a key that chains through [shim](https://github.com/rhboot/shim) — the small, Microsoft-signed EFI application that most Linux distributions use as their first-stage bootloader.
+
+This means **fwupd's EFI binary must be chainloaded via shim** unless you have self-signed `fwupd.efi` with a key enrolled directly in the firmware's Secure Boot database.
+
+<Note>
+  If your distribution has enrolled fwupd's signing key directly into the Secure Boot `db`, or you have self-signed the binary, you can disable the shim requirement by setting `DisableShimForSecureBoot=true` in `/etc/fwupd/fwupd.conf` under the `[uefi_capsule]` section. Most users should leave this at the default.
+</Note>
+
+If you use GRUB and need it to launch `fwupdx64.efi` directly instead of relying on NVRAM boot entries or Capsule-on-Disk, set `EnableGrubChainLoad=true` in the `[uefi_capsule]` section. This configures GRUB to act as the loader for the fwupd EFI binary.
+
+## Secure Boot status and HSI
+
+fwupd monitors whether Secure Boot is enabled as part of its runtime security checks. If Secure Boot is turned off, your HSI score gains the `!` suffix — for example, `HSI:2!` — indicating a runtime security issue is present, even if your hardware otherwise meets all the requirements for that level.
+
+```bash
+# Example output when Secure Boot is disabled
+fwupdmgr security
+Host Security ID: HSI:2! (v2.0.9)
+...
+✘ UEFI Secure Boot:    Disabled
+```
+
+Turning Secure Boot back on clears the `!` suffix. See the [HSI documentation](/security/hsi) for full details on runtime suffixes.
+
+## The dbx revocation database
+
+The **dbx** (Forbidden Signatures Database) is a list of EFI binaries and certificates that the UEFI firmware blocks from running, even if they would otherwise be trusted by the `db`. It is the primary mechanism for revoking compromised or vulnerable bootloaders.
+
+fwupd can update the dbx through the **uefi-dbx plugin**, which uses the `org.uefi.dbx2` protocol. The LVFS distributes dbx updates signed by the Microsoft KEK, and fwupd has successfully applied these updates over 10 million times with a greater than 99% success rate.
+
+The uefi-dbx plugin also checks whether your local dbx contains all current revocations and records the result as an HSI security attribute. If your dbx is out of date, `fwupdmgr security` will report it:
+
+```text
+✘ UEFI dbx:    Not valid
+```
+
+To update the dbx:
+
+```bash
+fwupdmgr refresh
+fwupdmgr update
+```
+
+<Note>
+  Earlier fwupd versions used the `org.uefi.dbx` protocol, which counted Microsoft hashes. The current `org.uefi.dbx2` protocol (available from fwupd 1.9.27 and 2.0.4 onward) uses date-based versioning and is more reliable across systems where Microsoft has removed hashes from intermediate dbx releases.
+</Note>
+
+## The db certificate database and the 2026 certificate expiry
+
+The **db** (Signature Database) contains the certificates and hashes that authorize EFI binaries to run. It includes both OEM-specific certificates and the Microsoft certificates used to sign third-party bootloaders like shim.
+
+A Microsoft root certificate used for signing third-party boot media (including Linux's shim) expires on **26 June 2026**. Some new hardware already ships without the old certificate. fwupd can distribute the updated `db` and `KEK` entries through the LVFS to ensure your system continues to boot signed Linux media after the cutover.
+
+If your system is affected, `fwupdmgr security` will show:
+
+```text
+✘ UEFI db:    Invalid
+```
+
+Applying the available updates via `fwupdmgr update` will resolve this.
+
+## Relevant `[uefi_capsule]` configuration options
+
+These options live in the `[uefi_capsule]` section of `/etc/fwupd/fwupd.conf`:
+
+| Option | Description |
+|---|---|
+| `DisableShimForSecureBoot` | Skip shim chainloading. Only set this if `fwupd.efi` is self-signed or its key is enrolled directly in the firmware `db`. |
+| `EnableGrubChainLoad` | Configure GRUB to launch `fwupdx64.efi` instead of using NVRAM boot entries or Capsule-on-Disk. |
+| `DisableCapsuleUpdateOnDisk` | Disable Capsule-on-Disk even if the firmware advertises support for it. |
+| `RequireESPFreeSpace` | Minimum free space required on the ESP in megabytes. Defaults to at least twice the payload size. |
+| `EspLocation` | Override the ESP mount point. By default fwupd auto-detects `/boot/efi`, `/boot`, or `/efi`. |
+
+<Note>
+  If you are running a Linux kernel older than 6.4, or your firmware does not support `RT->QueryVariableInfo`, you may need to set `IgnoreEfivarsFreeSpace=true` in the `[fwupd]` section of `/etc/fwupd/fwupd.conf`. This bypasses the efivars free space check that guards `db`, `dbx`, `KEK`, and `PK` updates.
+</Note>
+
+## ESP location and access requirements
+
+fwupd automatically detects the ESP if it is mounted at `/boot/efi`, `/boot`, or `/efi` and UDisks is available. If your ESP is mounted elsewhere, set `EspLocation` in `/etc/fwupd/fwupd.conf`.
+
+The uefi-capsule plugin requires the following system access:
+
+- Read/write access to the EFI system partition
+- Read access to `/sys/firmware/efi/esrt/`
+- Read access to `/sys/firmware/efi/fw_platform_size`
+- Read/write access to `/sys/firmware/efi/efivars`

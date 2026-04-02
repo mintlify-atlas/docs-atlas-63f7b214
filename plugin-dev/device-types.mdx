@@ -1,0 +1,246 @@
+---
+title: "Device Types"
+description: "Base device classes available for plugin authors to subclass"
+---
+
+## Overview
+
+Every device in fwupd is represented by a subclass of `FuDevice`. The base classes handle the mechanics of device enumeration, identification, and communication — you subclass them and implement only the methods specific to your hardware.
+
+When adding support for a new device, first check whether an existing device type already covers your transport layer and communication protocol. Subclassing an existing type means you only implement the protocol on top of the primitives it already provides.
+
+## Base device classes
+
+<CardGroup cols={2}>
+  <Card title="FuDevice" icon="box">
+    The root base class for all devices. Use directly when fwupd cannot discover the device via the OS (e.g. a chip reachable only through another device).
+  </Card>
+  <Card title="FuUdevDevice" icon="hard-drive">
+    For devices managed by udev: character/block devices, sysfs nodes. Handles device file open/read/write and udev event listening.
+  </Card>
+  <Card title="FuUsbDevice" icon="usb">
+    For USB devices. Handles USB enumeration, interface claiming, and control/bulk transfers.
+  </Card>
+  <Card title="FuBluezDevice" icon="bluetooth">
+    For BLE devices managed via the BlueZ D-Bus interface. Handles BLE characteristic reads and writes.
+  </Card>
+  <Card title="FuHidDevice / FuHidrawDevice" icon="gamepad">
+    For HID devices. `FuHidDevice` operates over USB HID; `FuHidrawDevice` uses the kernel hidraw interface.
+  </Card>
+  <Card title="FuI2cDevice" icon="circuit-board">
+    For I2C devices. Useful for chips accessed through an I2C bus, such as embedded controllers behind a USB hub.
+  </Card>
+</CardGroup>
+
+### FuDevice
+
+`FuDevice` is the root class for all fwupd devices. It provides:
+
+- Physical and logical ID management
+- Instance ID and GUID tracking
+- Version and flag management
+- Battery level and inhibition APIs
+- Child device hierarchy
+
+Use `FuDevice` directly only when the device is not natively visible to the OS — for example, a composite device where an updatable chip is connected via I2C to a USB hub that acts as an interface.
+
+### FuUdevDevice
+
+`FuUdevDevice` is the base type for devices managed by udev. It:
+
+- Listens to udev add/remove events for automatic hotplug
+- Sets the physical ID from `PCI_SLOT_NAME` or equivalent udev properties
+- Opens, reads from, and writes to device files on your behalf
+
+Subclass `FuUdevDevice` when your device is a character or block device in `/dev`, or when you need to read sysfs attributes. You implement the protocol on top of the open/read/write primitives.
+
+See `fu_logitech_hidpp_runtime_bolt_poll_peripherals()` in the `logitech-hidpp` plugin for a real-world example.
+
+### FuUsbDevice
+
+`FuUsbDevice` is the base type for USB devices. It handles USB enumeration and provides helpers for control transfers, bulk transfers, and interface claiming.
+
+Subclass `FuUsbDevice` when your device appears as a USB peripheral. The `probe()` method in `FuUsbDevice` automatically sets the vendor ID, product ID, and generates instance IDs from USB descriptor fields.
+
+### FuBluezDevice
+
+`FuBluezDevice` is the base type for BLE devices managed through BlueZ. It provides:
+
+- Device enumeration via the `FuBluezBackend`
+- Primitives for reading and writing BLE GATT characteristics
+
+See the [BLE support](#ble-support) section below for guidance on when to use this class vs. the hidraw interface.
+
+### FuHidDevice / FuHidrawDevice
+
+Use `FuHidDevice` for devices that communicate via the USB HID protocol. Use `FuHidrawDevice` to access a HID device through the kernel's hidraw interface (e.g. `/dev/hidraw0`), which is useful when the device implements a vendor-specific HID report protocol on top of USB or Bluetooth.
+
+### FuI2cDevice
+
+Use `FuI2cDevice` for devices on an I2C bus. This is common for embedded controllers and sensors embedded in composite devices such as docking stations.
+
+## Device identification
+
+Every device in fwupd is identified by a combination of:
+
+| Identifier | Description |
+|---|---|
+| Physical ID | Represents the electrical connection, e.g. `PCI_SLOT_NAME=0000:3e:00:0`. Multiple devices can share the same physical ID. |
+| Logical ID | Disambiguates devices with the same physical ID. Together with the physical ID, uniquely identifies a device. |
+| Instance ID | A string representing the device subsystem, vendor, model, and revision. Two identical devices have the same instance ID. |
+| GUID | Generated from instance ID attributes. Used to match firmware metadata against a specific device type. |
+
+Set the physical and logical IDs in `probe()`:
+
+```c
+fu_device_set_physical_id(self, "usb:1-1.2");
+fu_device_set_logical_id(self, "cfg");
+```
+
+Add instance IDs to build GUIDs:
+
+```c
+fu_device_add_instance_id(dev, "USB\\VID_1038&PID_1430");
+```
+
+Or build structured instance IDs from component parts:
+
+```c
+fu_device_add_instance_u16(self, "VID", fu_usb_device_get_vid(FU_USB_DEVICE(self)));
+fu_device_add_instance_u16(self, "PID", fu_usb_device_get_pid(FU_USB_DEVICE(self)));
+fu_device_build_instance_id(self, error, "USB", "VID", "PID", NULL);
+```
+
+<Note>
+  The GUID value generated from instance IDs must match the `provides` value in the `.metainfo.xml` file for a firmware update to succeed.
+</Note>
+
+## Composite devices
+
+Composite devices — such as docking stations made up of multiple updatable chips — are modeled as parent/child hierarchies.
+
+The parent device polls for and registers child devices using `fu_device_add_child()`:
+
+```c
+fu_device_add_child(FU_DEVICE(self), FU_DEVICE(child_device));
+```
+
+### Update ordering
+
+By default, fwupd updates child devices before the parent. If your device requires the opposite order, set:
+
+```c
+fu_device_add_private_flag(FU_DEVICE(self), FU_DEVICE_PRIVATE_FLAG_INSTALL_PARENT_FIRST);
+```
+
+You can also model dependencies via firmware priority in the metainfo file.
+
+<Tip>
+  See `fu_logitech_hidpp_runtime_bolt_poll_peripherals()` in the `logitech-hidpp` plugin for a complete example of composite device enumeration.
+</Tip>
+
+## BLE support
+
+BLE support in fwupd on Linux is provided by BlueZ. The right approach depends on what BLE profile your device implements:
+
+<AccordionGroup>
+  <Accordion title="HID-over-GATT profile">
+    If your device implements the standard HID-over-GATT BLE profile, the kernel exposes it as a hidraw device. You can communicate with it through the [hidraw interface](https://www.kernel.org/doc/html/latest/hid/hidraw.html) using `FuHidrawDevice`, the same way you would for a wired HID device.
+  </Accordion>
+
+  <Accordion title="Custom BLE profile">
+    If your device implements a custom BLE profile, you must manage it through the `FuBluezBackend`, which uses the BlueZ D-Bus interface. Subclass `FuBluezDevice`, which provides device enumeration and the basic read/write primitives for BLE characteristics.
+  </Accordion>
+</AccordionGroup>
+
+## Battery checks
+
+If the update process does not rely on external power — for example, a wireless peripheral updated over BLE — you can define a minimum battery level required before allowing an update.
+
+Set the minimum battery level threshold (default is 10%):
+
+```c
+fu_device_set_battery_threshold(FU_DEVICE(self), 25); /* 25% minimum */
+```
+
+Report the device's current battery level:
+
+```c
+fu_device_set_battery_level(FU_DEVICE(self), battery_percent);
+```
+
+If the battery level is below the threshold, fwupd automatically inhibits the device and prevents the user from starting a firmware update. The device still appears in `fwupdmgr get-devices`.
+
+## Device inhibition
+
+You can temporarily disable firmware updates on a device for any reason by calling `fu_device_inhibit()`. The device remains visible but is not updatable:
+
+```c
+fu_device_inhibit(FU_DEVICE(self), "my-inhibit-id", "Device is in an unsafe state");
+```
+
+Re-enable updates by removing the inhibit:
+
+```c
+fu_device_uninhibit(FU_DEVICE(self), "my-inhibit-id");
+```
+
+<Note>
+  Multiple inhibits can be active simultaneously. The device is only updatable when **all** inhibits have been removed.
+</Note>
+
+## Private flags
+
+Beyond the standard public flags and internal flags, you can define plugin-specific private flags. Private flags can be set in code or in quirk files.
+
+To define a private flag:
+
+1. Define the flag value as a macro:
+   ```c
+   #define MY_PRIVATE_FLAG (1 << 2)
+   ```
+   This becomes part of the ABI and must be versioned.
+
+2. Register the flag in the device `init` function and assign it a string identifier:
+   ```c
+   fu_device_register_private_flag(FU_DEVICE(self), MY_PRIVATE_FLAG);
+   ```
+
+Manage the flag at runtime:
+
+```c
+fu_device_add_private_flag(FU_DEVICE(self), MY_PRIVATE_FLAG);
+fu_device_remove_private_flag(FU_DEVICE(self), MY_PRIVATE_FLAG);
+fu_device_has_private_flag(FU_DEVICE(self), MY_PRIVATE_FLAG);
+```
+
+In a quirk file, add the flag identifier to the `Flags` attribute:
+
+```
+Flags = myflag,is-bootloader
+```
+
+## Waiting for device replug
+
+Some devices enumerate differently in runtime and bootloader modes, requiring fwupd to recognize both identities as the same device.
+
+Set `FWUPD_DEVICE_FLAG_WAIT_FOR_REPLUG` before the `detach` method returns. This causes fwupd to wait for a predetermined amount of time for the device to re-enumerate:
+
+```c
+fu_device_add_flag(FU_DEVICE(self), FWUPD_DEVICE_FLAG_WAIT_FOR_REPLUG);
+```
+
+Use the `CounterpartGuid` key in the quirk file to link the runtime and bootloader identities. See [Quirk Files](/plugin-dev/quirks) for details.
+
+Two removal delay constants are available depending on whether the user must intervene:
+
+| Constant | Value | Use when |
+|---|---|---|
+| `FU_DEVICE_REMOVE_DELAY_RE_ENUMERATE` | 10 000 ms | Device resets itself automatically |
+| `FU_DEVICE_REMOVE_DELAY_USER_REPLUG` | 40 000 ms | User must manually unplug and replug |
+
+Set the delay on the device:
+
+```c
+fu_device_set_remove_delay(FU_DEVICE(self), FU_DEVICE_REMOVE_DELAY_RE_ENUMERATE);
+```

@@ -1,0 +1,211 @@
+---
+title: "Quirk Files"
+description: "Use quirk files to configure device behavior without code changes"
+---
+
+## What are quirks?
+
+Quirk files are key-value configuration files that modify device behavior at runtime. Instead of hard-coding device-specific attributes in plugin source code, you declare them in a quirk file. fwupd reads quirk files at startup and applies matching entries to discovered devices.
+
+Using quirks for simple device variants — those that differ only in identity or configuration — keeps plugin code generic and makes it easy to add support for new device models without recompiling.
+
+<Note>
+  If a firmware format, update protocol, and device communication are already fully supported by an existing plugin, adding a device entry to the plugin's quirk file may be the **only change required**.
+</Note>
+
+## Quirk file location
+
+Quirk files live in the plugin directory alongside the plugin source. The file is named after the plugin, for example:
+
+```
+plugins/vli/vli-usbhub.quirk
+plugins/steelseries/steelseries.quirk
+plugins/analogix/analogix.quirk
+```
+
+At build time, quirk files are registered in `meson.build`:
+
+```c
+plugin_quirks += files('foo.quirk')
+```
+
+## Quirk file format
+
+Each entry begins with a device identifier in square brackets, followed by key-value pairs — one per line. Lines beginning with `#` are comments.
+
+```ini
+[USB\VID_1038&PID_1430]
+Plugin = steelseries
+GType = FuSteelseriesGamepad
+Name = Stratus Duo RX
+Icon = usb-receiver
+CounterpartGuid = USB\VID_1038&PID_1432
+Flags = is-receiver
+```
+
+The identifier in `[brackets]` is an instance ID that fwupd uses to match a physical device. The format depends on the device subsystem — for USB devices it is `USB\VID_XXXX&PID_YYYY`.
+
+## Common quirk keys
+
+<AccordionGroup>
+  <Accordion title="Plugin">
+    Declares which plugin should handle this device. This is required when the matching plugin would not otherwise claim the device automatically.
+
+    ```ini
+    Plugin = vli
+    ```
+  </Accordion>
+
+  <Accordion title="GType">
+    Specifies the GObject device type the plugin should instantiate for this device. Use this to select among multiple device types within the same plugin.
+
+    ```ini
+    GType = FuVliUsbhubDevice
+    ```
+  </Accordion>
+
+  <Accordion title="Name">
+    Sets the human-readable display name of the device. This overrides whatever name the device reports or the plugin sets in code.
+
+    ```ini
+    Name = Stratus Duo RX
+    ```
+  </Accordion>
+
+  <Accordion title="Summary">
+    A short description of the device shown in management UI.
+
+    ```ini
+    Summary = USB hub with firmware update support
+    ```
+  </Accordion>
+
+  <Accordion title="Icon">
+    Sets the icon theme name for this device.
+
+    ```ini
+    Icon = usb-receiver
+    ```
+  </Accordion>
+
+  <Accordion title="Flags">
+    Sets device flags. You can combine multiple flags with commas. Both public flags (like `is-bootloader`) and plugin-registered private flags can be set here.
+
+    ```ini
+    Flags = is-receiver,is-bootloader
+    ```
+  </Accordion>
+
+  <Accordion title="CounterpartGuid">
+    Links two device entries that represent the same physical device in different modes (runtime and bootloader). When fwupd sees `CounterpartGuid`, it knows to treat the matched device as the counterpart identity of this device.
+
+    ```ini
+    CounterpartGuid = USB\VID_1038&PID_1432
+    ```
+
+    See the [CounterpartGuid pattern](#the-counterpartguid-pattern) section below for a full example.
+  </Accordion>
+</AccordionGroup>
+
+## The CounterpartGuid pattern
+
+Devices that switch between runtime and bootloader modes often enumerate with a different USB PID in each mode. fwupd needs to know that both are the same physical device.
+
+The `CounterpartGuid` key creates this link. Both the runtime and bootloader entries reference each other:
+
+```ini
+# Runtime mode
+[USB\VID_1038&PID_1430]
+Plugin = steelseries
+GType = FuSteelseriesGamepad
+Name = Stratus Duo RX
+Icon = usb-receiver
+CounterpartGuid = USB\VID_1038&PID_1432
+Flags = is-receiver
+
+# Bootloader mode
+[USB\VID_1038&PID_1432]
+Plugin = steelseries
+GType = FuSteelseriesGamepad
+Name = Stratus Duo RX bootloader
+Icon = usb-receiver
+CounterpartGuid = USB\VID_1038&PID_1430
+Flags = is-receiver,is-bootloader
+```
+
+When the device detaches from runtime mode and re-enumerates with PID `0x1432`, fwupd matches it to the bootloader entry and recognizes it as the same device because of the `CounterpartGuid` link.
+
+<Tip>
+  Set `FWUPD_DEVICE_FLAG_WAIT_FOR_REPLUG` on the device in your `detach` implementation so that fwupd waits for the device to re-enumerate after the mode switch.
+</Tip>
+
+## When to use a quirk vs. code
+
+| Scenario | Approach |
+|---|---|
+| New device model, same protocol as existing plugin | Add a quirk entry to the existing plugin's `.quirk` file |
+| Device has a different name/icon/flag in one mode | Use a quirk entry with `Flags`, `Name`, or `Icon` |
+| Two modes of same device enumerate differently | Use `CounterpartGuid` in a quirk entry |
+| Device requires a completely different update protocol | Write a new plugin |
+| Vendor-specific firmware header parsing | Implement a new firmware type in code |
+
+## Adding private flags via quirks
+
+After registering a private flag in code using `fu_device_register_private_flag()`, you can set it for specific devices in the quirk file without modifying plugin source. Add the flag's string identifier to the `Flags` value:
+
+```ini
+[USB\VID_1234&PID_5678]
+Plugin = foo
+Flags = my-vendor-flag,needs-extra-reset
+```
+
+In your plugin code you can then query the flag:
+
+```c
+if (fu_device_has_private_flag(FU_DEVICE(self), MY_VENDOR_FLAG)) {
+    /* apply vendor-specific behavior */
+}
+```
+
+## Complete quirk example
+
+The following is a complete quirk file for a USB hub device with two variants — one supporting firmware updates and one that does not — plus a matching bootloader entry:
+
+```ini
+# Acme USB Hub — updatable variant
+[USB\VID_ABCD&PID_1000]
+Plugin = acme-hub
+GType = FuAcmeHubDevice
+Name = Acme USB Hub (Updatable)
+Summary = USB 3.2 hub with firmware update support
+Icon = usb-hub
+CounterpartGuid = USB\VID_ABCD&PID_1001
+Flags = updatable
+
+# Acme USB Hub — bootloader mode
+[USB\VID_ABCD&PID_1001]
+Plugin = acme-hub
+GType = FuAcmeHubDevice
+Name = Acme USB Hub (Bootloader)
+Icon = usb-hub
+CounterpartGuid = USB\VID_ABCD&PID_1000
+Flags = is-bootloader
+
+# Acme USB Hub — non-updatable variant
+[USB\VID_ABCD&PID_1002]
+Plugin = acme-hub
+GType = FuAcmeHubDevice
+Name = Acme USB Hub (OEM)
+Summary = USB 3.2 hub
+Icon = usb-hub
+```
+
+## Debugging quirk matching
+
+Set `FWUPD_XMLB_VERBOSE=1` in the environment to see verbose output from the quirk matching engine. This shows which quirk entries fwupd evaluates and which keys it applies for each device:
+
+```bash
+FWUPD_XMLB_VERBOSE=1 fwupdtool get-devices --verbose
+```
+
+This is the most useful first step when a device is not picking up expected quirk values.

@@ -1,0 +1,514 @@
+---
+title: "fwupdmgr Command Reference"
+description: "Complete reference for the fwupdmgr command-line client"
+---
+
+`fwupdmgr` is the command-line client for the fwupd firmware update daemon. It is designed for interactive use, though you can use the `--json` flag to produce machine-readable output suitable for scripting.
+
+<Note>
+  The terminal output format is not guaranteed to be stable across fwupd versions. If you are parsing output in scripts, always pass `--json` to get a stable JSON payload.
+</Note>
+
+Graphical alternatives are also available for major desktop environments:
+
+- **GNOME Software** — software center with integrated firmware updates
+- **GNOME Firmware** — dedicated firmware management app
+- **KDE Discover** — KDE software center
+- **Canonical Firmware Updater** — Ubuntu-focused GUI
+- **System76 Firmware Manager** — Pop!\_OS firmware manager
+
+For most users, updating all devices is as simple as:
+
+```bash
+fwupdmgr refresh
+fwupdmgr update
+```
+
+---
+
+## Command groups
+
+<AccordionGroup>
+
+  <Accordion title="Interacting with discovered devices">
+
+    These commands let you inspect the devices fwupd has found on your system and the firmware available for them.
+
+    **`get-devices`**
+
+    Show all devices detected by fwupd. Use `--filter` to narrow the results.
+
+    ```bash
+    fwupdmgr get-devices
+    fwupdmgr get-devices --filter=updatable
+    ```
+
+    **`get-updates`** (alias: `get-upgrades`)
+
+    Show available firmware updates for each device on the system.
+
+    ```bash
+    fwupdmgr get-updates
+    ```
+
+    **`get-releases`**
+
+    Show all installable versions for a specific device — older, identical, and newer releases.
+
+    ```bash
+    fwupdmgr get-releases <device-id>
+    ```
+
+    **`get-details`**
+
+    Inspect a local `.cab` firmware archive without needing the target device present.
+
+    ```bash
+    fwupdmgr get-details firmware.cab
+    ```
+
+    **`search`**
+
+    Search firmware metadata for releases matching a query. You can search by:
+
+    - Device GUID, e.g. `eb68dbae-3aef-5077-92ae-9016d1f0c856`
+    - AppStream ID, e.g. `work.frame.Desktop.RyzenAIMax300.BIOS.firmware`
+    - Firmware or vendor name (full or partial), e.g. `Framework`
+    - Protocol, e.g. `org.uefi.capsule`
+    - CVE number, e.g. `CVE-2022-21894`
+    - Cabinet checksum (SHA-1 or SHA-256), e.g. `b34950fc65dabc0cb50e4c5f081829e40bf92e13`
+
+    ```bash
+    fwupdmgr search "Framework"
+    fwupdmgr search CVE-2022-21894
+    ```
+
+  </Accordion>
+
+  <Accordion title="Deploying firmware">
+
+    These commands install firmware onto devices.
+
+    **`update`**
+
+    Update every device to the newest available version. You will be asked for confirmation before any changes are made.
+
+    ```bash
+    fwupdmgr update
+    ```
+
+    **`install`**
+
+    Install a specific release to a specific device. Pass a local file path and `fwupdmgr` treats it as a `local-install`.
+
+    ```bash
+    fwupdmgr install <device-id> <version>
+    fwupdmgr install firmware.cab
+    ```
+
+    **`reinstall`**
+
+    Re-install the currently running firmware version on a device.
+
+    ```bash
+    fwupdmgr reinstall <device-id>
+    ```
+
+    **`downgrade`**
+
+    Install an older firmware release on a device.
+
+    ```bash
+    fwupdmgr downgrade <device-id>
+    ```
+
+    **`switch-branch`**
+
+    Switch a device between firmware branches. For example, a device may have a community-supported branch and a non-free vendor branch both available on the LVFS.
+
+    ```bash
+    fwupdmgr switch-branch <device-id>
+    ```
+
+    **`local-install`**
+
+    Install a firmware archive from a local file directly.
+
+    ```bash
+    fwupdmgr local-install firmware.cab
+    ```
+
+    **`activate`**
+
+    Set the staged firmware version as active. The device may go offline briefly while this happens.
+
+    ```bash
+    fwupdmgr activate <device-id>
+    ```
+
+    **`sync`**
+
+    Install all releases that match the Best Known Configuration (BKC) tag set on this machine. Requires `HostBkc` to be configured in `fwupd.conf`.
+
+    ```bash
+    fwupdmgr sync
+    ```
+
+  </Accordion>
+
+  <Accordion title="Approved firmware">
+
+    These commands manage an allow-list that restricts which firmware releases can be installed. This feature is primarily used in enterprise environments.
+
+    **`set-approved-firmware`**
+
+    Set the list of approved firmware checksums. Once any value is set, only firmware matching these checksums will be shown as installable from remotes that have `ApprovalRequired=true`.
+
+    <Note>
+      Manual installation via `fwupdmgr install` is still possible regardless of this list. The allow-list only applies to releases from remotes with `ApprovalRequired=true`.
+    </Note>
+
+    ```bash
+    fwupdmgr set-approved-firmware <checksum1,checksum2,...>
+    ```
+
+    **`get-approved-firmware`**
+
+    Retrieve the current allow-list. Returns an empty list if no allow-list is in place.
+
+    ```bash
+    fwupdmgr get-approved-firmware
+    ```
+
+    Checksums are SHA-1 or SHA-256 hashes of the cabinet archive file.
+
+  </Accordion>
+
+  <Accordion title="Emulation">
+
+    Device emulation lets you record real device behavior and replay it without the physical hardware present. This is useful for development and testing firmware updates.
+
+    **`emulation-tag`**
+
+    Mark a device (by device ID or GUID) to be watched for emulation recording.
+
+    ```bash
+    fwupdmgr emulation-tag <device-id-or-guid>
+    ```
+
+    **`emulation-save`**
+
+    Save captured data for all tagged devices to a JSON file.
+
+    ```bash
+    fwupdmgr emulation-save emulation-data.zip
+    ```
+
+    **`emulation-load`**
+
+    Load previously saved emulation data from a zip file.
+
+    ```bash
+    fwupdmgr emulation-load emulation-data.zip
+    ```
+
+    **`emulation-untag`**
+
+    Stop watching a device for emulation recording.
+
+    ```bash
+    fwupdmgr emulation-untag <device-id-or-guid>
+    ```
+
+    **`device-emulate`**
+
+    Run a device test against emulated (not physical) devices using a JSON manifest.
+
+    ```bash
+    fwupdmgr device-emulate manifest.json
+    ```
+
+    **`device-test`**
+
+    Test a physical device using a JSON manifest. This downloads and verifies cabinet archives and deploys them to real hardware.
+
+    ```bash
+    fwupdmgr device-test manifest.json
+    ```
+
+  </Accordion>
+
+  <Accordion title="Remotes">
+
+    These commands manage the remote metadata sources that fwupd uses to find firmware.
+
+    **`refresh`**
+
+    Download the latest firmware metadata from all enabled remotes.
+
+    ```bash
+    fwupdmgr refresh
+    ```
+
+    **`get-remotes`**
+
+    List all configured remotes, whether or not they are enabled.
+
+    ```bash
+    fwupdmgr get-remotes
+    ```
+
+    **`enable-remote`**
+
+    Enable a configured remote so it is included in refresh and update operations.
+
+    ```bash
+    fwupdmgr enable-remote lvfs-testing
+    ```
+
+    **`disable-remote`**
+
+    Disable a remote without deleting its stored metadata.
+
+    ```bash
+    fwupdmgr disable-remote lvfs-testing
+    ```
+
+    **`modify-remote`**
+
+    Change a setting on a remote. For example, to enable automatic update reporting:
+
+    ```bash
+    fwupdmgr modify-remote lvfs AutomaticReports true
+    ```
+
+    **`clean-remote`**
+
+    Delete the locally cached metadata for a remote.
+
+    ```bash
+    fwupdmgr clean-remote lvfs
+    ```
+
+  </Accordion>
+
+  <Accordion title="Historical data">
+
+    These commands let you view, share, export, or clear firmware update history.
+
+    **`report-export`**
+
+    Export firmware update history to an offline file for manual upload to a service such as the LVFS.
+
+    ```bash
+    fwupdmgr report-export report.json
+    ```
+
+    **`report-history`**
+
+    Upload firmware update history directly to the remote owner. This indicates the success or failure rate of a specific update and may return links to more information or workarounds for failures.
+
+    ```bash
+    fwupdmgr report-history
+    ```
+
+    **`get-history`**
+
+    Show the firmware update history stored locally by fwupd.
+
+    ```bash
+    fwupdmgr get-history
+    ```
+
+    **`get-results`**
+
+    Show the result of the last firmware update for a specific device.
+
+    ```bash
+    fwupdmgr get-results <device-id>
+    ```
+
+    **`clear-results`**
+
+    Clear the stored result of the last update for a device.
+
+    ```bash
+    fwupdmgr clear-results <device-id>
+    ```
+
+    **`report-devices`**
+
+    Upload the list of updatable devices to a remote server. This helps put pressure on vendors to support their hardware on Linux.
+
+    ```bash
+    fwupdmgr report-devices
+    ```
+
+  </Accordion>
+
+  <Accordion title="Platform security">
+
+    These commands let you inspect and modify the host security posture, including platform HSI attributes and BIOS settings.
+
+    **`security`**
+
+    List all Host Security ID (HSI) attributes, which are used to evaluate the security level of the machine.
+
+    ```bash
+    fwupdmgr security
+    fwupdmgr security --json
+    ```
+
+    **`security-fix`**
+
+    Apply a fix for a specific HSI failure.
+
+    ```bash
+    fwupdmgr security-fix <attribute-id>
+    ```
+
+    **`security-undo`**
+
+    Revert a previously applied HSI fix. Use this if `security-fix` caused a regression.
+
+    ```bash
+    fwupdmgr security-undo <attribute-id>
+    ```
+
+    **`get-bios-settings`**
+
+    Retrieve BIOS firmware settings and their allowable values.
+
+    ```bash
+    fwupdmgr get-bios-settings
+    fwupdmgr get-bios-settings WakeonLAN SecureBoot
+    fwupdmgr get-bios-settings --json
+    ```
+
+    **`set-bios-setting`**
+
+    Set one or more BIOS firmware settings. Provide settings as `KEY VALUE` pairs.
+
+    ```bash
+    fwupdmgr set-bios-setting WakeonLAN Primary
+    fwupdmgr set-bios-setting ~/settings.json --json
+    ```
+
+    See the [BIOS Settings](/user-guide/bios-settings) page for full details.
+
+  </Accordion>
+
+  <Accordion title="Others">
+
+    Miscellaneous commands for scripting, CI, and system management.
+
+    **`check-reboot-needed`**
+
+    Exit with a non-zero code if any device has a staged update that requires a reboot to complete.
+
+    ```bash
+    fwupdmgr check-reboot-needed
+    ```
+
+    **`device-wait`**
+
+    Block until a specific device appears in the fwupd device list.
+
+    ```bash
+    fwupdmgr device-wait <device-id>
+    ```
+
+    **`download`**
+
+    Download a file using the same transport mechanisms fwupd uses for firmware and metadata.
+
+    ```bash
+    fwupdmgr download https://example.com/file.cab
+    ```
+
+    **`modify-config`**
+
+    Change a daemon configuration value at runtime.
+
+    ```bash
+    fwupdmgr modify-config fwupd IgnorePower true
+    # or using the 2-argument form (defaults to the [fwupd] section)
+    fwupdmgr modify-config IgnorePower true
+    ```
+
+    See `man fwupd.conf` for the full list of configuration variables.
+
+    **`reset-config`**
+
+    Reset a configuration section back to its default values.
+
+    ```bash
+    fwupdmgr reset-config fwupd
+    ```
+
+    **`quit`**
+
+    Ask the fwupd daemon to stop after it finishes any in-progress update.
+
+    ```bash
+    fwupdmgr quit
+    ```
+
+    **`inhibit`**
+
+    Prevent accidental manual or automatic firmware upgrades.
+
+    ```bash
+    fwupdmgr inhibit "Maintenance window in progress"
+    ```
+
+    **`uninhibit`**
+
+    Remove a previously set inhibit to allow firmware upgrades again.
+
+    ```bash
+    fwupdmgr uninhibit <inhibit-id>
+    ```
+
+    **`unlock`**
+
+    Unlock a device to allow firmware access. Some platform devices require this before flashing.
+
+    ```bash
+    fwupdmgr unlock <device-id>
+    ```
+
+    **`get-plugins`**
+
+    List all plugins currently registered with the fwupd daemon.
+
+    ```bash
+    fwupdmgr get-plugins
+    ```
+
+    **`hwids`**
+
+    Print all hardware IDs (GUIDs) for the machine. These match the CHIDs used on Microsoft Windows and the values produced by `ComputerHardwareIds.exe`.
+
+    ```bash
+    fwupdmgr hwids
+    ```
+
+  </Accordion>
+
+</AccordionGroup>
+
+---
+
+## Exit codes
+
+| Code | Meaning |
+| ---- | ------- |
+| `0`  | Command succeeded |
+| `1`  | Generic failure |
+| `2`  | Command ran successfully but there was nothing to do |
+| `3`  | Requested resource was not found |
+
+<Tip>
+  In scripts, check for exit code `2` when running commands like `set-bios-setting` — it indicates that all settings were already at the desired value, which is often a successful no-op.
+</Tip>

@@ -1,0 +1,103 @@
+---
+title: "Environment variables"
+description: "Environment variables that influence fwupd runtime behavior"
+---
+
+fwupd and its companion tools read a set of environment variables at startup. You can use these to control debugging output, override file system paths, or alter runtime behavior without modifying configuration files.
+
+---
+
+## fwupdmgr and fwupdtool
+
+These variables affect the `fwupdmgr` and `fwupdtool` command-line tools.
+
+<ParamField body="DISABLE_SSL_STRICT" type="string">
+  Disables strict TLS certificate validation when downloading files. This can help when operating behind corporate firewalls that use SSL inspection or self-signed certificates.
+
+  <Warning>Only use this in controlled environments. Disabling certificate checking exposes downloads to interception.</Warning>
+</ParamField>
+
+<ParamField body="FWUPD_CURL_VERBOSE" type="string">
+  When set, enables verbose output from libcurl during file downloads, useful for diagnosing download failures.
+</ParamField>
+
+<ParamField body="FWUPD_SUPPORTED" type="string">
+  Overrides the `-Dsupported_build` Meson build option at runtime, allowing you to simulate a supported or unsupported build without recompiling.
+</ParamField>
+
+<ParamField body="FWUPD_LOG_DOMAINS" type="string">
+  Specifies custom log domains for verbose logging. This variable is set automatically when `VerboseDomains` is configured in `fwupd.conf`, but you can also set it manually.
+</ParamField>
+
+<ParamField body="FWUPD_XMLB_VERBOSE" type="string">
+  When set, shows detailed output about Xmlb silo regeneration and quirk file matching. Useful when debugging metadata parsing issues.
+</ParamField>
+
+<ParamField body="FWUPD_DBUS_SOCKET" type="string">
+  Path to the D-Bus socket file. Set this when running fwupd without a system `dbus-daemon`, such as in a container or testing environment.
+</ParamField>
+
+<ParamField body="FWUPD_PROFILE" type="string">
+  Sets the profiling traceback threshold in milliseconds. Operations that take longer than this threshold will emit a traceback in the log output.
+</ParamField>
+
+<ParamField body="FWUPD_POLKIT_NOCHECK" type="string">
+  When set, fwupd skips the check for installed Polkit policies. Useful in environments where Polkit is not available.
+</ParamField>
+
+<ParamField body="FWUPD_IGNORE_NETWORK_REACHABLE" type="string">
+  When set, fwupd skips network connectivity tests before attempting downloads.
+</ParamField>
+
+<Note>
+  Standard glibc locale variables such as `LANG` are honored for translated CLI output. libcurl proxy settings (`http_proxy`, `all_proxy`, `sftp_proxy`, `no_proxy`) are also respected.
+</Note>
+
+---
+
+## Daemon variables
+
+These variables affect the fwupd daemon process.
+
+<ParamField body="FWUPD_MACHINE_KIND" type="string">
+  Overrides the detected machine type. Valid values include `physical`, `virtual`, and `container`. Use this when fwupd incorrectly detects the machine kind, such as in nested virtualization scenarios.
+</ParamField>
+
+<ParamField body="FWUPD_HOST_EMULATE" type="string">
+  Loads test host data from `/usr/share/fwupd/host-emulate.d/` instead of probing real hardware. Set to the filename of the test fixture, for example `thinkpad-p1-no-iommu.json.gz`.
+</ParamField>
+
+<ParamField body="FWUPD_SYSCALL_FILTER" type="string">
+  Specifies the service manager performing syscall filtering. Set to `systemd` when running under systemd with seccomp filters enabled, so fwupd can adapt its behavior accordingly.
+</ParamField>
+
+---
+
+## File system override variables
+
+These variables redirect fwupd to non-standard file system paths. They are primarily useful when running fwupd in a container, a custom sysroot, or a non-FHS environment such as Snap.
+
+<Warning>
+  These variables are not fully documented in the fwupd source. For complete details, see the source file `libfwupdplugin/fu-common.c` in the fwupd repository.
+</Warning>
+
+| Variable | Description |
+|----------|-------------|
+| `CACHE_DIRECTORY` | Override the cache directory path. |
+| `CONFIGURATION_DIRECTORY` | Override the configuration directory path. |
+| `FWUPD_DATADIR` | Override the data directory (normally `/usr/share/fwupd`). |
+| `FWUPD_DATADIR_QUIRKS` | Override the directory for quirk files. |
+| `FWUPD_DATADIR_VENDOR_IDS` | Override the directory for vendor ID data files. |
+| `FWUPD_HOSTDIR` | Root directory used to locate the host OS `os-release` file. Defaults to `/`. |
+| `FWUPD_LIBDIR_PKG` | Override the directory for fwupd plugin libraries. |
+| `FWUPD_LOCALSTATEDIR` | Override the local state directory (normally `/var/lib`). |
+| `FWUPD_LOCKDIR` | Override the lock file directory. |
+| `FWUPD_SYSCONFDIR` | Override the system configuration directory (normally `/etc`). |
+| `FWUPD_SYSFSFWATTRIBDIR` | Override the sysfs firmware attributes directory. |
+| `FWUPD_SYSFSFWDIR` | Override the sysfs firmware directory. |
+| `FWUPD_UEFI_ESP_PATH` | Override the detected EFI System Partition path. |
+| `HOME` | Standard home directory, used for per-user fwupd state. |
+| `RUNTIME_DIRECTORY` | Override the runtime directory (e.g. `/run/fwupd`). |
+| `SNAP` | When set, indicates fwupd is running inside a Snap package. |
+| `SNAP_USER_DATA` | User data directory when running inside Snap. |
+| `STATE_DIRECTORY` | Override the state directory. |

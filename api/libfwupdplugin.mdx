@@ -1,0 +1,307 @@
+---
+title: "libfwupdplugin API Reference"
+description: "Plugin SDK for implementing firmware update support for new hardware"
+---
+
+## Overview
+
+`libfwupdplugin` is the plugin SDK. It provides all the base classes, helpers, and device backends you need to add firmware update support for new hardware.
+
+<Warning>
+  `libfwupdplugin` is only **partially** API and ABI stable. Symbols are removed when branching for new minor versions. If you maintain an out-of-tree plugin, run `./contrib/migrate.py` to update your code to the latest API after each fwupd release.
+</Warning>
+
+### Main header
+
+```c
+#include <fwupdplugin.h>
+```
+
+<Note>
+  Plugins should be upstreamed into fwupd. Out-of-tree plugins carry a maintenance burden and cannot take advantage of ongoing API improvements without manual migration work.
+</Note>
+
+---
+
+## Key classes
+
+<AccordionGroup>
+  <Accordion title="FuPlugin — base plugin class">
+    Every plugin subclasses `FuPlugin` and registers virtual functions for the lifecycle events it needs to handle.
+
+    **Commonly implemented vfuncs**
+
+    | Vfunc | Description |
+    |---|---|
+    | `startup` | Called once at daemon start; initialize connections and check prerequisites |
+    | `coldplug` | Called at startup to enumerate already-connected devices |
+    | `prepare` | Called before a firmware update to put the system into a suitable state |
+    | `cleanup` | Called after a firmware update (including on failure) to restore normal state |
+    | `write_firmware` | Write firmware binary data to the device |
+
+    **Useful methods**
+
+    | Method | Description |
+    |---|---|
+    | `fu_plugin_add_device()` | Register a discovered device with the daemon |
+    | `fu_plugin_remove_device()` | Unregister a device |
+    | `fu_plugin_add_rule()` | Declare an ordering relationship with another plugin |
+    | `fu_plugin_get_context()` | Access the shared `FuContext` |
+    | `fu_plugin_add_device_gtype()` | Register a device GType for automatic hotplug handling |
+    | `fu_plugin_has_private_flag()` | Check a plugin-specific flag |
+
+    **Minimal plugin skeleton**
+
+    ```c
+    #include "config.h"
+    #include "fu-foo-plugin.h"
+
+    struct _FuFooPlugin {
+        FuPlugin parent_instance;
+        gpointer proxy;
+    };
+
+    G_DEFINE_TYPE(FuFooPlugin, fu_foo_plugin, FU_TYPE_PLUGIN)
+
+    static gboolean
+    fu_foo_plugin_startup(FuPlugin *plugin, FuProgress *progress, GError **error)
+    {
+        FuFooPlugin *self = FU_FOO_PLUGIN(plugin);
+        self->proxy = create_proxy();
+        if (self->proxy == NULL) {
+            g_set_error(error, FWUPD_ERROR, FWUPD_ERROR_NOT_SUPPORTED,
+                        "failed to create proxy");
+            return FALSE;
+        }
+        return TRUE;
+    }
+
+    static void
+    fu_foo_constructed(GObject *obj)
+    {
+        FuPlugin *plugin = FU_PLUGIN(obj);
+        fu_plugin_add_rule(plugin, FU_PLUGIN_RULE_RUN_BEFORE, "dfu");
+    }
+
+    static void
+    fu_foo_plugin_class_init(FuFooPluginClass *klass)
+    {
+        FuPluginClass *plugin_class = FU_PLUGIN_CLASS(klass);
+        GObjectClass *object_class = G_OBJECT_CLASS(klass);
+        object_class->constructed = fu_foo_constructed;
+        plugin_class->startup = fu_foo_plugin_startup;
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="FuDevice — device base class">
+    `FuDevice` is the base class for all devices. Plugin-specific device types subclass it (or a backend-specific subclass like `FuUsbDevice`).
+
+    **Setup methods**
+
+    | Method | Description |
+    |---|---|
+    | `fu_device_set_id()` | Set the unique device identifier |
+    | `fu_device_add_instance_id()` | Add an instance ID (generates a GUID automatically) |
+    | `fu_device_set_version()` | Set the firmware version string |
+    | `fu_device_add_flag()` | Add a device capability flag (e.g. `FWUPD_DEVICE_FLAG_UPDATABLE`) |
+    | `fu_device_add_icon()` | Add an icon theme name |
+    | `fu_device_set_name()` | Set the human-readable device name |
+    | `fu_device_set_vendor()` | Set the vendor name |
+    | `fu_device_add_protocol()` | Register a supported update protocol |
+    | `fu_device_set_firmware_gtype()` | Set the firmware class for automatic parsing |
+    | `fu_device_set_battery_threshold()` | Set the minimum battery level for updates |
+    | `fu_device_inhibit()` | Temporarily disable updates on the device |
+    | `fu_device_uninhibit()` | Remove an inhibit |
+    | `fu_device_add_child()` | Add a child device (composite devices) |
+
+    **Commonly implemented device vfuncs**
+
+    | Vfunc | Description |
+    |---|---|
+    | `probe` | Identify the device and set non-interface-claiming properties |
+    | `open` | Open the device interface |
+    | `setup` | Read parameters that require an open interface |
+    | `prepare_firmware` | Parse and validate the firmware blob |
+    | `write_firmware` | Write firmware to the device |
+    | `read_firmware` | Read firmware back from the device |
+    | `detach` | Switch to bootloader mode |
+    | `attach` | Switch back to application mode |
+    | `reload` | Read the new firmware version after update |
+    | `set_progress` | Report expected duration percentages for each update phase |
+    | `convert_version` | Convert a raw integer version to a string |
+
+    **Example: minimal device enumeration**
+
+    ```c
+    static gboolean
+    fu_foo_plugin_coldplug(FuPlugin *plugin, FuProgress *progress, GError **error)
+    {
+        g_autoptr(FuDevice) dev = fu_device_new(fu_plugin_get_context(plugin));
+        fu_device_set_id(dev, "dummy-1:2:3");
+        fu_device_add_instance_id(dev, "2d47f29b-83a2-4f31-a2e8-63474f4d4c2e");
+        fu_device_set_version(dev, "1.2.3");
+        fu_device_add_icon(dev, "computer");
+        fu_device_add_flag(dev, FWUPD_DEVICE_FLAG_UPDATABLE);
+        fu_plugin_add_device(plugin, dev);
+        return TRUE;
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="FuFirmware — firmware base class">
+    `FuFirmware` is the base class for all firmware parsers and builders. Subclass it to handle custom firmware formats.
+
+    | Method / Vfunc | Description |
+    |---|---|
+    | `fu_firmware_parse_bytes()` | Parse firmware from a `GBytes` buffer |
+    | `fu_firmware_write()` | Serialize the firmware to a `GBytes` buffer |
+    | `fu_firmware_export()` | Export to an XML representation (useful for testing) |
+    | `fu_firmware_get_bytes()` | Get the raw firmware payload bytes |
+    | `fu_firmware_add_image()` | Add a child firmware image |
+    | `fu_firmware_get_image_by_id()` | Look up a child image by ID |
+    | `parse` vfunc | Parse the firmware format and populate the object |
+    | `write` vfunc | Serialize the firmware object to bytes |
+    | `export` vfunc | Convert to XML for human inspection |
+    | `tokenize` vfunc | Break firmware into records |
+    | `build` vfunc | Build a firmware object from XML |
+
+    You can test the `export` output of any firmware file with:
+
+    ```bash
+    fwupdtool firmware-parse --plugins <plugin> <firmware_file> <firmware_type>
+    ```
+  </Accordion>
+
+  <Accordion title="FuProgress — progress tracking">
+    `FuProgress` tracks and reports multi-step operation progress. Use it in `set_progress` and any long-running vfunc.
+
+    | Method | Description |
+    |---|---|
+    | `fu_progress_set_id()` | Set an identifier for this progress (use `G_STRLOC`) |
+    | `fu_progress_add_step()` | Add a named step with a percentage weight |
+    | `fu_progress_done()` | Mark the current step as complete |
+    | `fu_progress_set_status()` | Set the current `FwupdStatus` |
+    | `fu_progress_get_percentage()` | Get the current progress percentage |
+    | `fu_progress_sleep()` | Sleep for N milliseconds while showing progress |
+
+    **Example: declaring update phases**
+
+    ```c
+    static void
+    fu_foo_device_set_progress(FuDevice *device, FuProgress *progress)
+    {
+        fu_progress_set_id(progress, G_STRLOC);
+        fu_progress_add_step(progress, FWUPD_STATUS_DEVICE_RESTART, 10, "detach");
+        fu_progress_add_step(progress, FWUPD_STATUS_DEVICE_WRITE,   45, "write");
+        fu_progress_add_step(progress, FWUPD_STATUS_DEVICE_RESTART, 40, "attach");
+        fu_progress_add_step(progress, FWUPD_STATUS_DEVICE_BUSY,     5, "reload");
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="FuContext — shared plugin context">
+    `FuContext` is the single shared context object passed to all plugins and devices. Use it to access system-wide information.
+
+    | Method | Description |
+    |---|---|
+    | `fu_context_get_smbios_string()` | Read a string from SMBIOS |
+    | `fu_context_get_smbios_integer()` | Read an integer from SMBIOS |
+    | `fu_context_get_esp_volumes()` | Get EFI System Partition volumes |
+    | `fu_context_get_hwid_guids()` | Get hardware identifier GUIDs |
+    | `fu_context_build_filename()` | Build a path relative to an fwupd-managed directory |
+  </Accordion>
+
+  <Accordion title="Device backends — FuUsbDevice, FuUdevDevice, FuBluezDevice, FuHidDevice">
+    These backend classes handle OS-level device discovery and I/O. Subclass the one that matches your device's transport layer.
+
+    **FuUsbDevice** — USB devices
+
+    | Method | Description |
+    |---|---|
+    | `fu_usb_device_new()` | Create a USB device with a context |
+    | `fu_usb_device_get_vid()` | Vendor ID |
+    | `fu_usb_device_get_pid()` | Product ID |
+
+    Device discovery, claiming interfaces, and bulk/control/interrupt transfers are handled by the base class. Override `probe`, `setup`, `write_firmware`, etc. to implement your protocol.
+
+    **FuUdevDevice** — udev/sysfs devices
+
+    | Method | Description |
+    |---|---|
+    | `fu_udev_device_read_sysfs()` | Read a sysfs attribute |
+    | `fu_udev_device_write_sysfs()` | Write a sysfs attribute (with timeout in ms) |
+    | `fu_udev_device_ioctl_new()` | Perform an ioctl |
+    | `fu_udev_device_pread()` | Read from the device file |
+    | `fu_udev_device_pwrite()` | Write to the device file |
+    | `fu_udev_device_add_flag()` | Add a udev device flag |
+
+    **FuBluezDevice** — Bluetooth LE devices (via BlueZ D-Bus)
+
+    Handles BLE device enumeration and basic characteristic read/write. If your device uses HID-over-GATT, consider using `FuHidDevice` through the hidraw interface instead.
+
+    **FuHidDevice** — HID devices
+
+    Provides HID report get/set operations on top of `FuUsbDevice` or a hidraw node. Use this for USB HID or Bluetooth HID devices that communicate via reports.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Migration guide
+
+Use `./contrib/migrate.py` to automate migration of out-of-tree plugins.
+
+<AccordionGroup>
+  <Accordion title="2.1.1 (latest)">
+    | Old | New |
+    |---|---|
+    | `fu_plugin_device_add()` | `fu_plugin_add_device()` |
+    | `fu_plugin_device_remove()` | `fu_plugin_remove_device()` |
+    | `fu_path_from_kind()` | `fu_path_store_get_path()` or `fu_context_get_path()` |
+    | `FuArchive` | `FuZipFirmware` or `FuCabArchive` |
+    | `fu_firmware_build_from_xml()` | `fu_firmware_new_from_xml()` |
+  </Accordion>
+
+  <Accordion title="2.0.x">
+    | Old | New |
+    |---|---|
+    | `fu_udev_device_set_flags()` | `fu_udev_device_add_flag()` |
+    | `fu_udev_device_get_sysfs_attr()` | `fu_udev_device_read_sysfs()` |
+    | `fu_usb_device_is_open()` | `fu_device_has_private_flag(device, FU_DEVICE_PRIVATE_FLAG_IS_OPEN)` |
+    | `FWUPD_DEVICE_FLAG_REGISTERED` | `FU_DEVICE_PRIVATE_FLAG_REGISTERED` |
+    | `FWUPD_DEVICE_FLAG_INSTALL_PARENT_FIRST` | `FU_DEVICE_PRIVATE_FLAG_INSTALL_PARENT_FIRST` |
+    | `fu_firmware_parse_full()` | `fu_firmware_parse_bytes()` |
+    | `fu_firmware_parse()` | `fu_firmware_parse_bytes()` with offset `0x0` |
+    | `fu_udev_device_get_vendor` | `fu_device_get_vid()` |
+    | `fu_udev_device_get_model` | `fu_device_get_pid()` |
+  </Accordion>
+
+  <Accordion title="1.8.x">
+    | Old | New |
+    |---|---|
+    | `fu_udev_device_pread_full()` | `fu_udev_device_pread()` |
+    | `fu_udev_device_ioctl_full()` | `fu_udev_device_ioctl()` |
+    | `fu_device_new_with_context()` | `fu_device_new()` |
+    | `fu_plugin_has_custom_flag()` | `fu_plugin_has_private_flag()` |
+    | `fu_common_dump*` | `fu_dump*` (remove `_common`) |
+    | `fu_common_string*` | `fu_string*` |
+    | `fu_common_bytes*` | `fu_bytes*` |
+    | `fu_common_vercmp_full()` | `fu_version_compare()` |
+    | `fu_progress_add_step()` | Add 4th parameter for step name |
+  </Accordion>
+
+  <Accordion title="1.6.x and 1.5.x">
+    | Old | New |
+    |---|---|
+    | `fu_device_sleep_with_progress()` | `fu_progress_sleep()` (unit changed from seconds to **milliseconds**) |
+    | `fu_device_get_status()` | `fu_progress_get_status()` |
+    | `fu_device_set_status()` | `fu_progress_set_status()` |
+    | `fu_device_set_progress()` | `fu_progress_set_steps()` + `fu_progress_add_step()` + `fu_progress_done()` |
+    | `fu_device_has_custom_flag()` | `fu_device_has_private_flag()` |
+    | `fu_device_get_protocol()` | `fu_device_get_protocols()` |
+    | `fu_device_set_protocol()` | `fu_device_add_protocol()` |
+    | `fu_plugin_get_usb_context()` | Remove — no longer required |
+    | `fu_plugin_runner_usb_device_added()` | `fu_plugin_runner_backend_device_added()` |
+  </Accordion>
+</AccordionGroup>

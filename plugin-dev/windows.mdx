@@ -1,0 +1,68 @@
+---
+title: "Windows Support"
+description: "Using fwupd on Windows to update USB and other devices"
+---
+
+## Overview
+
+fwupd builds and ships a Windows MSI package via continuous integration. Because Windows lacks `udev`, `efivarfs`, and `devfs`, any plugin that depends on those Linux-specific subsystems is excluded. However, USB-based plugins work on Windows, so many of the same devices that are updatable on Linux can also be updated on Windows.
+
+<Note>
+  There are currently no Start Menu or desktop shortcuts installed. You interact with fwupd through a Command Prompt window.
+</Note>
+
+## Installation
+
+<Steps>
+  <Step title="Download the MSI installer">
+    Get the latest `.msi` package from the [fwupd GitHub releases page](https://github.com/fwupd/fwupd/releases/), for example `fwupd-1.9.9-setup-x86_64.msi`. You can also use CI artifacts from the `dist/setup/` directory.
+  </Step>
+  <Step title="Bypass the SmartScreen prompt">
+    Windows may show an *Unknown publisher* warning. Click **More info**, then click **Run anyway** to proceed.
+  </Step>
+  <Step title="Approve the UAC prompt">
+    If you are not already running as an administrator, Windows will show a User Account Control (UAC) dialog. Click **Yes**.
+  </Step>
+  <Step title="Complete the installation">
+    Follow the installer steps. fwupd installs to `C:\Program Files (x86)\fwupd\`.
+  </Step>
+</Steps>
+
+## Running fwupd
+
+<Steps>
+  <Step title="Open a Command Prompt as administrator">
+    Use the Start menu to search for **Command Prompt**, right-click it, and choose **Run as administrator**. Click **Yes** on the UAC dialog that appears.
+  </Step>
+  <Step title="Navigate to the fwupd bin directory">
+    ```text
+    cd "C:\Program Files (x86)\fwupd\bin"
+    ```
+  </Step>
+  <Step title="Use fwupdtool or fwupdmgr">
+    `fwupdtool.exe` works identically to `fwupdtool` on Linux or macOS:
+
+    ```text
+    fwupdtool.exe get-devices
+    fwupdtool.exe get-updates
+    ```
+
+    The `fwupd.exe` daemon process also works. Open a second Command Prompt window and run `fwupdmgr.exe` from the same directory to interact with the running daemon:
+
+    ```text
+    fwupdmgr.exe get-devices
+    fwupdmgr.exe update
+    ```
+  </Step>
+</Steps>
+
+## D-Bus on Windows
+
+There is no `dbus-daemon` on Windows. Instead of connecting to the well-known D-Bus bus name `org.freedesktop.fwupd`, local D-Bus clients should connect via TCP:
+
+| Setting | Value |
+|---|---|
+| Address | `127.0.0.1` |
+| Port | `1341` |
+
+If you are building a client application that uses libfwupd on Windows, configure your D-Bus connection to use this TCP socket rather than the standard socket path.

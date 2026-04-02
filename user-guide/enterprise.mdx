@@ -1,0 +1,155 @@
+---
+title: "Enterprise Use"
+description: "Control firmware updates centrally with approved firmware and best-known configurations"
+---
+
+fwupd provides several mechanisms for organizations that need to centrally control which firmware can be installed on managed machines. These include an approved firmware allow-list, a Best Known Configuration (BKC) mechanism, the ability to inhibit updates temporarily, and device inventory reporting.
+
+---
+
+## Approved firmware
+
+The approved firmware feature lets you restrict which releases from a remote are installable, so that only firmware explicitly vetted by your organization can be deployed.
+
+### Enabling approval enforcement
+
+Add `ApprovalRequired=true` to the remote configuration file you want to control. For example, for the LVFS remote, edit `/etc/fwupd/remotes.d/lvfs.conf`:
+
+```text
+[fwupd Remote]
+Enabled=true
+ApprovalRequired=true
+```
+
+Once set, only firmware whose cabinet archive checksum appears in the approved list will be shown as installable through normal CLI and GUI tools.
+
+<Note>
+  Manual installation via `fwupdmgr install` bypasses the allow-list. The restriction applies only to releases from remotes that have `ApprovalRequired=true`.
+</Note>
+
+### Setting the allow-list
+
+You can pre-populate the allow-list in `/etc/fwupd/fwupd.conf` using the `ApprovedFirmware` key:
+
+```text
+[fwupd]
+ApprovedFirmware=abc123def456,789abcdef012
+```
+
+Each entry is a SHA-1 or SHA-256 checksum of the cabinet archive file, not the firmware binary itself. Separate multiple checksums with commas.
+
+You can also set or extend the allow-list at runtime:
+
+```bash
+fwupdmgr set-approved-firmware <checksum1,checksum2,...>
+```
+
+To see what is currently on the allow-list:
+
+```bash
+fwupdmgr get-approved-firmware
+```
+
+An empty result means no allow-list is active and all firmware from enabled remotes is installable.
+
+### Finding checksums
+
+Use `fwupdmgr search` to find the cabinet checksum for a specific firmware release:
+
+```bash
+fwupdmgr search "Thunderbolt Controller"
+```
+
+Or use `fwupdmgr get-releases` on a specific device and look for the checksum fields in the output:
+
+```bash
+fwupdmgr get-releases <device-id> --json
+```
+
+---
+
+## Best Known Configuration (BKC)
+
+The BKC feature lets you define a specific firmware version tag that your organization has validated, and synchronize all machines to that version.
+
+### Configuring a BKC tag
+
+Set the `HostBkc` key in `/etc/fwupd/fwupd.conf`:
+
+```text
+[fwupd]
+HostBkc=vendor-2024q1
+```
+
+The value is a tag string that maps to firmware releases published on the LVFS (or your internal mirror) with a matching BKC tag.
+
+### Synchronizing to the BKC
+
+Once `HostBkc` is set, run:
+
+```bash
+fwupdmgr sync
+```
+
+This installs all firmware releases that carry the matching BKC tag, which may include upgrades, downgrades, or no-ops depending on the current device state.
+
+<Tip>
+  You can combine `HostBkc` with `ApprovalRequired` for layered control: the BKC defines the target state, and the allow-list ensures nothing outside that set can be installed.
+</Tip>
+
+---
+
+## Inhibiting updates
+
+Use inhibit to temporarily prevent firmware updates — for example, during a maintenance freeze or while a machine is in a sensitive operational state.
+
+```bash
+fwupdmgr inhibit "Maintenance freeze until 2025-01-15"
+```
+
+This returns an inhibit ID. To re-enable updates, pass that ID to `uninhibit`:
+
+```bash
+fwupdmgr uninhibit <inhibit-id>
+```
+
+<Warning>
+  An active inhibit blocks both manual and automatic update attempts. Make sure to uninhibit when the maintenance window ends.
+</Warning>
+
+---
+
+## Device inventory reporting
+
+`report-devices` uploads the list of updatable devices on a machine to a remote server. This lets LVFS administrators and OEM firmware teams see which hardware is in use on Linux and prioritize support for it.
+
+```bash
+fwupdmgr report-devices
+```
+
+This is separate from update history reporting (`report-history`), which covers the outcomes of firmware update attempts.
+
+---
+
+## Summary of enterprise-relevant commands
+
+<CardGroup cols={2}>
+  <Card title="set-approved-firmware" icon="shield-check">
+    Set the allow-list of cabinet checksums that may be installed from approval-required remotes.
+  </Card>
+  <Card title="get-approved-firmware" icon="list-check">
+    Retrieve the current allow-list. An empty result means no restriction is active.
+  </Card>
+  <Card title="sync" icon="arrows-rotate">
+    Install all firmware releases matching the configured `HostBkc` tag.
+  </Card>
+  <Card title="inhibit / uninhibit" icon="lock">
+    Temporarily block or re-enable firmware updates on a machine.
+  </Card>
+  <Card title="report-devices" icon="server">
+    Push the machine's device inventory to a remote server for vendor visibility.
+  </Card>
+  <Card title="report-history" icon="clock-rotate-left">
+    Upload firmware update outcomes to the LVFS or configured remote.
+  </Card>
+</CardGroup>

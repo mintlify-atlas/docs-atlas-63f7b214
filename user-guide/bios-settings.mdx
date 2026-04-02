@@ -1,0 +1,205 @@
+---
+title: "BIOS Settings"
+description: "Read and modify BIOS firmware settings from Linux using fwupd"
+---
+
+fwupd 1.8.4 and later can read and write BIOS settings on supported machines using the Linux kernel's [firmware-attributes API](https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-class-firmware-attributes). Hardware drivers advertise the settings they expose; fwupd provides a unified interface for clients to view and change them.
+
+## Requirements
+
+- fwupd 1.8.4 or later
+- A kernel driver that implements the firmware-attributes API for your hardware
+- PolicyKit authorization (when using `fwupdmgr`) or root access (when using `fwupdtool`)
+
+---
+
+## Interactive usage
+
+### Getting BIOS settings
+
+To list all available BIOS settings on the machine:
+
+```bash
+fwupdmgr get-bios-setting
+```
+
+To retrieve specific settings, list their names space-delimited:
+
+```bash
+fwupdmgr get-bios-setting WindowsUEFIFirmwareUpdate MmioAbove4GLimit
+```
+
+Example output:
+
+```text
+WindowsUEFIFirmwareUpdate:
+  Setting type:         Enumeration
+  Current Value:        Enable
+  Description:          BIOS updates delivered via LVFS or Windows Update
+  Read Only:            False
+  Possible Values:
+    0:                  Disable
+    1:                  Enable
+
+
+MmioAbove4GLimit:
+  Setting type:         Enumeration
+  Current Value:        Auto
+  Description:          MmioAbove4GLimit
+  Read Only:            False
+  Possible Values:
+    0:                  Auto
+    1:                  40
+    2:                  42
+    3:                  44
+    4:                  46
+    5:                  48
+```
+
+### Setting BIOS settings
+
+To change a BIOS setting, pass the name followed by the desired value:
+
+```bash
+fwupdmgr set-bios-setting WakeonLAN Primary
+```
+
+Example output:
+
+```text
+Set BIOS setting 'WakeonLAN' using 'Primary'.
+
+An update requires a reboot to complete. Restart now? [y|N]:
+```
+
+<Warning>
+  Most BIOS settings only take effect after a reboot. fwupd will prompt you to restart when a reboot is required.
+</Warning>
+
+To set multiple settings in one command, provide them as consecutive `KEY VALUE` pairs:
+
+```bash
+fwupdmgr set-bios-setting WakeonLAN Primary SecureBoot Enable
+```
+
+### Bash tab completion
+
+When using Bash, tab completion is available for both setting names and values.
+
+Completing setting names:
+
+```bash
+fwupdmgr get-bios-setting W<TAB>
+WakeonLAN                  WakeUponAlarm              WindowsUEFIFirmwareUpdate
+```
+
+Completing values for an enumeration setting:
+
+```bash
+fwupdmgr set-bios-setting WindowsUEFIFirmwareUpdate <TAB>
+Disable  Enable
+```
+
+---
+
+## Programmatic usage
+
+Add `--json` to any BIOS settings command to get JSON input/output for use in scripts.
+
+### Fetching settings as JSON
+
+```bash
+fwupdmgr get-bios-setting WakeonLAN --json
+```
+
+```json
+{
+  "BiosSettings": [
+    {
+      "Name": "WakeonLAN",
+      "Description": "WakeonLAN",
+      "Filename": "/sys/class/firmware-attributes/thinklmi/attributes/WakeonLAN",
+      "BiosSettingId": "com.thinklmi.WakeonLAN",
+      "BiosSettingCurrentValue": "Primary",
+      "BiosSettingReadOnly": "false",
+      "BiosSettingType": 1,
+      "BiosSettingPossibleValues": [
+        "Primary",
+        "Automatic",
+        "Disable"
+      ]
+    }
+  ]
+}
+```
+
+If no setting names are provided, all settings are returned. Multiple names can be listed on the command line.
+
+<Note>
+  In JSON mode, error messages are suppressed. Rely on the exit code to detect failures. To see error details, add `--verbose`.
+</Note>
+
+### Setting settings via JSON
+
+Create a JSON file with the desired settings using the same format produced by `get-bios-setting --json`, then pass the file path to `set-bios-setting`:
+
+```bash
+fwupdmgr set-bios-setting ~/my-settings.json --json
+```
+
+<Tip>
+  Exit code `2` from `set-bios-setting` means all settings were already at the desired values — nothing was changed. This is expected behavior and not an error.
+</Tip>
+
+---
+
+## Policy enforcement
+
+You can use fwupd to enforce a BIOS settings policy across managed machines. When fwupd daemon starts, it reads JSON files from `/etc/fwupd/bios-settings.d/` and programs any settings found there to their specified values. It also marks those settings as read-only so fwupd clients cannot change them.
+
+To set up a policy:
+
+<Steps>
+  <Step title="Export your desired settings">
+    Use `get-bios-setting --json` to produce a JSON file containing the settings you want to enforce.
+
+    ```bash
+    fwupdmgr get-bios-setting WakeonLAN SecureBoot --json > /tmp/policy.json
+    ```
+  </Step>
+  <Step title="Edit the JSON to reflect desired values">
+    Open the file and set `BiosSettingCurrentValue` to the value you want enforced for each setting.
+  </Step>
+  <Step title="Deploy to the policy directory">
+    Copy the file into `/etc/fwupd/bios-settings.d/` with a `.json` extension.
+
+    ```bash
+    cp /tmp/policy.json /etc/fwupd/bios-settings.d/corporate-policy.json
+    ```
+  </Step>
+  <Step title="Restart fwupd">
+    The next time the fwupd daemon starts (including at boot), it will apply and lock the specified settings.
+
+    ```bash
+    systemctl restart fwupd
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+  Policy enforcement via fwupd does not block the raw kernel firmware-attributes API. A user with appropriate kernel-level permissions can still write to the sysfs interface directly, but fwupd will re-apply the policy on next daemon startup.
+</Warning>
+
+---
+
+## Setting types
+
+The kernel firmware-attributes API exposes three types of BIOS settings:
+
+| Type | Description |
+| ---- | ----------- |
+| **Enumeration** | Accepts only one value from a fixed list of possible values |
+| **Integer** | Accepts a value within a defined numeric range |
+| **String** | Accepts a UTF-8 string up to a defined maximum length |
+
+fwupd validates input before sending it to the driver where possible, providing clearer error messages than a raw write failure would give. fwupd also normalizes common synonyms — for example, if a setting expects `Enabled` and you pass `tRUE`, fwupd maps it to `Enabled` automatically.

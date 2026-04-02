@@ -1,0 +1,213 @@
+---
+title: "Building fwupd"
+description: "Set up a fwupd development environment to build, test, and debug plugins"
+---
+
+<Info>
+  **Prerequisites**
+
+  - A PC running Linux — preferably the latest version of Fedora, installed bare metal (not in a VM)
+  - Working internet access
+  - A user account with administrator permissions
+</Info>
+
+## Set up the development environment
+
+The fwupd development environment runs inside a [virtualenv](https://virtualenv.pypa.io/en/latest/user_guide.html) so that your work does not conflict with any system-installed fwupd. All builds go into `venv/build` and all installs into `venv/dist`.
+
+<Steps>
+  <Step title="Clone the repository">
+    ```shell
+    git clone https://github.com/fwupd/fwupd.git
+    cd fwupd
+    ```
+  </Step>
+
+  <Step title="Run the setup script">
+    ```shell
+    ./contrib/setup
+    ```
+
+    This script installs build dependencies, configures the virtualenv, and sets up pre-commit hooks.
+  </Step>
+
+  <Step title="Activate the environment">
+    ```shell
+    source venv/bin/activate
+    ```
+
+    You can tell the environment is active by the `(fwupd)` prefix at the start of your shell prompt:
+
+    ```text
+    (fwupd) u@fedora:~/fwupd$
+    ```
+
+    To leave the environment at any time, run `deactivate`.
+  </Step>
+
+  <Step title="Build the project">
+    ```shell
+    build-fwupd
+    ```
+
+    This script configures and builds fwupd with default settings.
+  </Step>
+
+  <Step title="Run the test suite">
+    ```shell
+    test-fwupd
+    ```
+  </Step>
+</Steps>
+
+## The three binaries
+
+fwupd is split into three main components:
+
+| Binary | Purpose | Runs as |
+|---|---|---|
+| `fwupd` | Background daemon | root (via `sudo` in the dev env) |
+| `fwupdmgr` | Client tool for end users | normal user |
+| `fwupdtool` | Developer/debug tool, no daemon required | root (via `sudo` in the dev env) |
+
+Within the development environment, wrappers let you launch all three as you would on a real system:
+
+```shell
+fwupd
+```
+
+```shell
+fwupdmgr get-devices
+```
+
+```shell
+fwupdtool get-devices
+```
+
+### Key differences from a system install
+
+Three things work differently in the development environment compared to a production system:
+
+1. **No systemd service.** You must start the daemon manually in a separate terminal.
+2. **No D-Bus activation.** To test `fwupd` and `fwupdmgr` together, open two terminal tabs, each with the environment activated — one running the daemon, one running the client.
+3. **`fwupd` and `fwupdtool` run as root** automatically via `sudo`.
+
+## Using fwupdtool for plugin debugging
+
+`fwupdtool` runs plugins directly without a daemon. This makes it much faster for plugin-focused work: instead of waiting several seconds and sifting through thousands of log lines, you get output in seconds from just the plugin you care about.
+
+To list devices from a single plugin with verbose output:
+
+```shell
+fwupdtool --plugins vli get-devices --verbose
+```
+
+Example output:
+
+```text
+10:51:49:0584 FuMain               Lenovo ThinkPad WS Dock
+ DeviceId:             73ef80b60058b4f18549921520bfd94eaf18710a
+ Guid:                 dd1f77bd-88ef-5293-9e34-1fe5ce187658 <- USB\VID_17EF&PID_305A&REV_5011
+ Guid:                 1c09a12d-e58a-5b4d-84af-ee3eb4c3c68b <- USB\VID_17EF&PID_305A
+ Guid:                 6201fecc-1641-51f6-a6d2-38a06d5476bf <- VLI_USBHUB\SPI_C220
+ Summary:              USB 3.x Hub
+ Plugin:               vli
+ Protocol:             com.vli.usbhub
+ Version:              50.11
+```
+
+To install a raw firmware blob directly on a device (bypassing the cabinet archive):
+
+```shell
+fwupdtool --verbose --plugins vli \
+  install-blob /home/u/the-firmware.bin 73ef80b60058b4f18549921520bfd94eaf18710a
+```
+
+### Firmware parsing
+
+You can parse raw `.bin` files using all the firmware parsers built into fwupd plugins:
+
+```shell
+fwupdtool firmware-parse /home/user/VL105_APP6_8C_09_08_06_20190815.bin
+```
+
+`fwupdtool` prompts you to choose the firmware type:
+
+```text
+Choose a firmware type:
+0. Cancel
+1. conexant
+2. 8bitdo
+...
+11. vli-usbhub
+12. vli-usbhub-pd
+12<enter>
+FuVliUsbhubPdFirmware:
+Version:                 140.9.8.6
+ChipId:                  VL105
+VID:                     0x2109
+PID:                     0x105
+```
+
+## End-to-end testing with fwupdmgr
+
+To test the full daemon-and-client flow, open two terminals, each with the environment activated.
+
+In the first terminal, start the daemon:
+
+```shell
+fwupd --verbose
+```
+
+In the second terminal, send a firmware archive to it:
+
+```shell
+fwupdmgr install ~/foo.cab
+```
+
+The daemon terminal will show detailed debugging output as it calls your plugin code.
+
+## Visual Studio Code integration
+
+The build process generates VS Code tasks and debugger launch targets automatically.
+
+### Building and testing
+
+- **Build** — press `ctrl-shift-b` to trigger the default build task.
+- **Test** — open the command palette (`ctrl-shift-p`), type **Run test task**, and press Enter.
+
+### Debugging
+
+All three binaries support attaching a debugger as a normal user by setting `DEBUG=1`:
+
+```shell
+DEBUG=1 fwupdtool get-devices
+```
+
+```text
+Process /home/u/fwupd/venv/dist/bin/fwupdtool created; pid = 595311
+Listening on port 9091
+```
+
+This starts `gdbserver` listening on a local port. Then in VS Code:
+
+1. Set a source breakpoint.
+2. Open the debugger with `ctrl-shift-d`.
+3. Select the target (`fwupdtool`, `fwupdmgr`, or `fwupd`) from the dropdown.
+4. Press `F5` to attach.
+
+To debug the daemon specifically, open the command palette, run **Run task**, and choose the `gdbserver-fwupd` task before attaching with `ctrl-shift-d` → `gdbserver (fwupd)`.
+
+## Pre-commit hooks
+
+`./contrib/setup` installs [pre-commit](https://pre-commit.com/) hooks that run automatically on `git commit`. They enforce:
+
+- Code formatting via `clang-format`, `black`, and `shfmt`
+- Shell script validation via `shellcheck`
+- Documentation completeness — all user-visible `fwupdmgr` commands must be documented
+- Correct plugin header usage
+- Common GError and fwupd anti-pattern detection
+
+<Tip>
+  If a `check-source.py` check fails incorrectly, you can suppress it with a `/* nocheck:token */` comment. File an issue against fwupd with a minimal reproducer so the tool can be fixed for future commits.
+</Tip>

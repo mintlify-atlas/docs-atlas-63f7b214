@@ -1,0 +1,178 @@
+---
+title: "Debugging Plugins"
+description: "Tools and techniques for debugging fwupd plugins"
+---
+
+## The `--verbose` flag
+
+The single most important debugging technique is passing `--verbose` to any fwupd binary. Passing it twice increases verbosity further:
+
+```bash
+fwupd --verbose
+fwupdmgr get-devices --verbose
+fwupdtool get-devices --verbose --verbose
+```
+
+With `--verbose`, the daemon and tools print timestamped log lines from every plugin, showing exactly what is happening during device discovery and updates.
+
+## Using fwupdtool for isolated plugin testing
+
+`fwupdtool` runs outside the system daemon, directly in your terminal. You can restrict it to a single plugin with `--plugins`, which makes the output immediately relevant and avoids waiting for every other plugin to enumerate:
+
+```bash
+fwupdtool --plugins vli get-devices --verbose
+```
+
+This outputs device information like:
+
+```text
+10:51:49:0584 FuMain               Lenovo ThinkPad WS Dock
+ DeviceId:             73ef80b60058b4f18549921520bfd94eaf18710a
+ Guid:                 dd1f77bd-88ef-5293-9e34-1fe5ce187658 <- USB\VID_17EF&PID_305A&REV_5011
+ Guid:                 1c09a12d-e58a-5b4d-84af-ee3eb4c3c68b <- USB\VID_17EF&PID_305A
+ Plugin:               vli
+ Protocol:             com.vli.usbhub
+ Version:              50.11
+```
+
+You can also install a raw firmware blob directly without a cabinet archive:
+
+```bash
+fwupdtool --verbose --plugins vli \
+  install-blob /home/u/the-firmware.bin 73ef80b60058b4f18549921520bfd94eaf18710a
+```
+
+## Plugin-verbose mode
+
+When the daemon or `fwupdtool` is started with `--plugin-verbose=<plugin>`, fwupd sets the environment variable `FWUPD_<PLUGIN>_VERBOSE=1` process-wide. Plugins can check this variable to enable highly detailed tracing that would be too noisy to keep on by default.
+
+```bash
+fwupdtool --plugin-verbose=logitech_hidpp get-devices --verbose
+# sets FWUPD_LOGITECH_HID_VERBOSE=1
+```
+
+In your plugin code, check the environment variable before emitting verbose output:
+
+```c
+if (g_getenv("FWUPD_LOGITECH_HID_VERBOSE") != NULL)
+    g_debug("detailed transfer: %s", fu_dump_raw(buf, bufsz));
+```
+
+## Adding debug messages
+
+Use `g_debug()` for debug messages. Define `G_LOG_DOMAIN` at the top of each source file so messages are tagged with the module name in the journal:
+
+```c
+#define G_LOG_DOMAIN "FuFooPlugin"
+
+static void
+fu_foo_plugin_do_thing(FuFooPlugin *self)
+{
+    g_debug("doing the thing with device %s", fu_device_get_id(FU_DEVICE(self)));
+}
+```
+
+See the [GLib logging documentation](https://docs.gtk.org/glib/logging.html) for further information on log domains and filtering.
+
+## Inspecting binary data
+
+Two helper functions let you dump raw binary buffers to the console as hexadecimal:
+
+- `fu_dump_full()` — detailed hex+ASCII dump with offsets
+- `fu_dump_raw()` — compact hex dump of a buffer
+
+Both are defined in `libfwupdplugin/fu-common.c` and used extensively throughout the plugin codebase. Search for existing uses to see typical call patterns.
+
+```c
+fu_dump_full(G_LOG_DOMAIN, "response", buf, bufsz);
+```
+
+## Parsing and inspecting firmware
+
+`fwupdtool firmware-parse` lets you inspect a binary firmware file using any parser built into fwupd. Run it without specifying a type to get a menu of available parsers:
+
+```bash
+fwupdtool firmware-parse /home/user/VL105_APP6_8C_09_08_06_20190815.bin
+```
+
+You can also specify a plugin and firmware type directly:
+
+```bash
+fwupdtool firmware-parse --plugins myplugin firmware.bin myfirmwaretype
+```
+
+This is especially useful when testing the `export()` vfunc of a new firmware class, since it prints an XML representation of the parsed firmware.
+
+## End-to-end testing with fwupdmgr
+
+To test daemon and client interaction together, open two terminals both activated into the fwupd development environment. In the first:
+
+```bash
+fwupd --verbose
+```
+
+In the second:
+
+```bash
+fwupdmgr install ~/foo.cab
+```
+
+The daemon terminal shows all plugin activity while `fwupdmgr` drives the install. The firmware archive is sent via a file descriptor, which exercises the same code path as a production update.
+
+## VS Code debugger: fwupdtool and fwupdmgr
+
+All three binaries (`fwupd`, `fwupdtool`, `fwupdmgr`) can be launched with `gdbserver` attached by setting `DEBUG=1`:
+
+```bash
+DEBUG=1 fwupdtool get-devices
+# Process /home/u/fwupd/venv/dist/bin/fwupdtool created; pid = 595311
+# Listening on port 9091
+```
+
+<Steps>
+  <Step title="Set a breakpoint in VS Code">
+    Open the fwupd repository in VS Code and click in the gutter next to the line you want to break on.
+  </Step>
+  <Step title="Open the Run and Debug panel">
+    Press **Ctrl+Shift+D** or click the debugger icon in the Activity Bar.
+  </Step>
+  <Step title="Select the launch target">
+    Choose `fwupdtool` or `fwupdmgr` from the dropdown at the top of the panel.
+  </Step>
+  <Step title="Start debugging">
+    Press **F5** or click the green Start button. VS Code connects to `gdbserver` and stops at your breakpoint.
+  </Step>
+</Steps>
+
+## VS Code debugger: fwupd daemon
+
+To debug the daemon itself, use the built-in VS Code task to launch it with `DEBUG=1`:
+
+<Steps>
+  <Step title="Run the gdbserver-fwupd task">
+    Open the command palette with **Ctrl+Shift+P**, type **Run task**, and select `gdbserver-fwupd`. This launches the daemon in a terminal window.
+  </Step>
+  <Step title="Attach the debugger">
+    Open the Run and Debug panel (**Ctrl+Shift+D**) and choose `gdbserver (fwupd)` from the dropdown, then press **F5**.
+  </Step>
+</Steps>
+
+## Pre-commit source checks
+
+The `./contrib/setup` script installs [pre-commit](https://pre-commit.com/) hooks that run automatically on `git commit`. These include:
+
+- Code formatting via `clang-format`, `black`, and `shfmt`
+- Shell script validation with `shellcheck`
+- Checking that all `fwupdmgr` commands are documented
+- Verifying correct plugin header usage
+- Detecting common GError and fwupd anti-patterns
+
+If `check-source.py` flags a line that you are certain is correct, you can suppress the check with a `/* nocheck:token */` comment:
+
+```c
+some_function(); /* nocheck:some-token */
+```
+
+<Note>
+  If you use `nocheck`, file an issue against fwupd with a minimal reproducer so the tool can be improved.
+</Note>

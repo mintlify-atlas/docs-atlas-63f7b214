@@ -1,0 +1,68 @@
+---
+title: "Introduction"
+description: "What fwupd is, how it works, and who it's for"
+---
+
+fwupd is a system daemon that makes firmware updates on Linux automatic, safe, and reliable. It integrates with the [Linux Vendor Firmware Service (LVFS)](https://fwupd.org/) to deliver signed firmware updates for hundreds of device types — from UEFI capsules and NVMe drives to USB peripherals and Thunderbolt controllers.
+
+<CardGroup cols={2}>
+  <Card title="Quick start" icon="rocket" href="/quickstart">
+    Check for updates and update your firmware in minutes using fwupdmgr.
+  </Card>
+  <Card title="fwupdmgr reference" icon="terminal" href="/user-guide/fwupdmgr">
+    Full command reference for the fwupd command-line client.
+  </Card>
+  <Card title="Plugin development" icon="puzzle-piece" href="/plugin-dev/building">
+    Build a plugin to add firmware update support for new hardware.
+  </Card>
+  <Card title="Platform security (HSI)" icon="shield-halved" href="/security/hsi">
+    Evaluate and improve your system's firmware security posture.
+  </Card>
+</CardGroup>
+
+## The three main binaries
+
+The fwupd project is split into three components:
+
+- **`fwupd`** — the background daemon that runs as root. It loads plugins, communicates with hardware, downloads firmware from LVFS, and applies updates.
+- **`fwupdmgr`** — the command-line client for end users. It communicates with the running `fwupd` daemon over D-Bus and lets you check for updates, apply them, and report results.
+- **`fwupdtool`** — a developer and debugging tool that runs as root. It performs most of the same operations as `fwupdmgr` but talks directly to plugins without going through the daemon, making it faster and easier to isolate issues during development.
+
+## How it works
+
+fwupd runs as a background service and exposes a [D-Bus](https://www.freedesktop.org/wiki/Software/dbus/) interface. End users interact with it via `fwupdmgr` on the command line, or through graphical frontends such as GNOME Software, GNOME Firmware, and KDE Discover. The daemon runs with root privileges so that it can write firmware to hardware; unprivileged users communicate with it over D-Bus.
+
+At a high level, the update flow is:
+
+1. `fwupdmgr refresh` downloads the latest firmware metadata from LVFS.
+2. fwupd compares the metadata against the devices it can see on your system.
+3. If updates are available, `fwupdmgr update` downloads and applies them — either immediately (live updates) or at the next reboot (staged updates).
+
+## The Linux Vendor Firmware Service (LVFS)
+
+The [LVFS](https://fwupd.org/) is a free service where hardware vendors publish signed firmware for their devices. fwupd is configured to use LVFS by default. Vendors upload firmware capsules to LVFS, and fwupd downloads, verifies, and installs them automatically for Linux users.
+
+Any OEM or firmware creator can submit firmware to LVFS to make it available to the Linux community.
+
+## Plugin system
+
+fwupd uses a plugin architecture to support different types of hardware. Plugins handle the device-specific logic of detecting hardware, parsing firmware, and performing updates. The project includes over 100 plugins covering devices such as:
+
+- UEFI capsule updates (BIOS/UEFI firmware)
+- NVMe drives
+- USB peripherals (hubs, keyboards, audio interfaces)
+- Thunderbolt controllers
+- Embedded controllers
+- And many more
+
+Each plugin registers the devices it supports with the daemon. When an update is available, the daemon calls the appropriate plugin to perform the installation.
+
+## Peer-to-peer metadata sharing with Passim
+
+If [Passim](https://github.com/hughsie/passim) is installed and enabled alongside fwupd, the daemon re-publishes downloaded metadata on `0.0.0.0:27500` by default. Other clients on the same local network can discover and use this cached metadata via mDNS/LLMNR, reducing repeated downloads from LVFS remotes.
+
+To disable P2P sharing, set `P2pPolicy=none` in `/etc/fwupd/fwupd.conf`, uninstall the passim package, or run:
+
+```bash
+systemctl mask passim.service
+```

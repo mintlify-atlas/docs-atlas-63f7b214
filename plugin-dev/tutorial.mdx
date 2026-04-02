@@ -1,0 +1,505 @@
+---
+title: "Plugin Tutorial"
+description: "Step-by-step guide to writing a fwupd plugin for new hardware"
+---
+
+## Introduction
+
+At the heart of fwupd are plugins that run at startup, when devices are hotplugged, and when updates are performed. The idea is to have many small plugins that each do one thing, ordered by dependencies at runtime. Using plugins you can add support for new hardware or new policies without making large changes across the source tree.
+
+There are broadly three types of plugin methods:
+
+<CardGroup cols={3}>
+  <Card title="Mechanism" icon="microchip">
+    Upload binary data into a specific hardware device using a vendor-specific update protocol.
+  </Card>
+  <Card title="Policy" icon="shield">
+    Control the system during updates, e.g. preventing the user from powering off or checking AC power.
+  </Card>
+  <Card title="Helpers" icon="wrench">
+    Provide additional metadata about devices, such as handling device quirks or supplementing identification.
+  </Card>
+</CardGroup>
+
+A plugin only needs to define the vfuncs it requires. The plugin name is taken automatically from the GType.
+
+## Getting started
+
+<Steps>
+  <Step title="Generate a skeleton plugin">
+    Rather than copying from other plugins, use the provided script to generate a plugin skeleton with all the parts typically needed. Navigate to the fwupd root directory and run:
+
+    ```bash
+    ./contrib/create-plugin.py \
+        --vendor VendorName \
+        --example ProductName \
+        --parent Usb \
+        --author "Your Name" \
+        --email "your@email.com"
+    ```
+
+    The skeleton contains all parts typically needed by a plugin. It is easier to delete unneeded code from the skeleton than to copy and paste the correct code from other plugins.
+  </Step>
+
+  <Step title="Define the plugin header">
+    Create `fu-foo-plugin.h` with the GObject type declaration:
+
+    ```c
+    /* fu-foo-plugin.h
+     *
+     * Copyright 2022 Richard Hughes <richard@hughsie.com>
+     *
+     * SPDX-License-Identifier: LGPL-2.1-or-later
+     */
+
+    #pragma once
+
+    #include <fwupdplugin.h>
+
+    G_DECLARE_FINAL_TYPE(FuFooPlugin, fu_foo_plugin, FU, FOO_PLUGIN, FuPlugin)
+    ```
+  </Step>
+
+  <Step title="Implement the plugin source">
+    Create `fu-foo-plugin.c` with the plugin body. A minimal plugin includes `init`, `finalize`, `constructed`, and `class_init`:
+
+    ```c
+    /* fu-foo-plugin.c
+     *
+     * Copyright Richard Hughes <richard@hughsie.com>
+     *
+     * SPDX-License-Identifier: LGPL-2.1-or-later
+     */
+
+    #include "config.h"
+
+    #include "fu-foo-plugin.h"
+
+    struct _FuFooPlugin {
+        FuPlugin parent_instance;
+        gpointer proxy;
+    };
+
+    G_DEFINE_TYPE(FuFooPlugin, fu_foo_plugin, FU_TYPE_PLUGIN)
+
+    static gboolean
+    fu_foo_plugin_startup(FuPlugin *plugin, FuProgress *progress, GError **error)
+    {
+        FuPluginData *data = fu_plugin_get_data(plugin);
+        self->proxy = create_proxy();
+        if(self->proxy == NULL) {
+            g_set_error(error, FWUPD_ERROR, FWUPD_ERROR_NOT_SUPPORTED,
+                        "failed to create proxy");
+            return FALSE;
+        }
+        return TRUE;
+    }
+
+    static void
+    fu_foo_plugin_init(FuFooPlugin *self)
+    {
+    }
+
+    static void
+    fu_foo_constructed(GObject *obj)
+    {
+        FuPlugin *plugin = FU_PLUGIN(obj);
+        FuContext *ctx = fu_plugin_get_context(plugin);
+        fu_plugin_add_rule(plugin, FU_PLUGIN_RULE_RUN_BEFORE, "dfu");
+    }
+
+    static void
+    fu_foo_finalize(GObject *obj)
+    {
+        FuFooPlugin *self = FU_FOO_PLUGIN(obj);
+        destroy_proxy(self->proxy);
+        G_OBJECT_CLASS(fu_foo_plugin_parent_class)->finalize(obj);
+    }
+
+    static void
+    fu_foo_plugin_class_init(FuFooPluginClass *klass)
+    {
+        FuPluginClass *plugin_class = FU_PLUGIN_CLASS(klass);
+        GObjectClass *object_class = G_OBJECT_CLASS(klass);
+
+        object_class->constructed = fu_foo_constructed;
+        object_class->finalize = fu_foo_finalize;
+        plugin_class->startup = fu_foo_plugin_startup;
+    }
+    ```
+
+    <Note>
+      Use `fu_plugin_add_rule()` in `constructed` to declare ordering dependencies between plugins. For most plugins this is not required. The example above ensures `foo` runs before the `dfu` plugin.
+    </Note>
+  </Step>
+
+  <Step title="Register your device GTypes">
+    In the `constructed` function, register the device and firmware GTypes your plugin handles:
+
+    ```c
+    static void
+    fu_foo_plugin_constructed(GObject *obj)
+    {
+        FuPlugin *plugin = FU_PLUGIN(obj);
+        FuContext *ctx = fu_plugin_get_context(plugin);
+        fu_plugin_add_device_gtype(plugin, FU_TYPE_STEELSERIES_MOUSE);
+        fu_plugin_add_device_gtype(plugin, FU_TYPE_STEELSERIES_GAMEPAD);
+    }
+
+    static void
+    fu_foo_plugin_class_init(FuFooPluginClass *klass)
+    {
+        plugin_class->init = fu_foo_plugin_constructed;
+    }
+    ```
+  </Step>
+
+  <Step title="Implement coldplug to enumerate devices">
+    The `coldplug` vfunc is called at startup to discover devices already connected to the system. See the next section for a full example.
+  </Step>
+</Steps>
+
+## Creating an abstract device
+
+The `coldplug` vfunc creates and registers devices with the daemon. In a real plugin you would read device details from sysfs, `/dev`, or a D-Bus interface. This example is hardcoded for clarity:
+
+```c
+static gboolean
+fu_foo_plugin_coldplug(FuPlugin *plugin, FuProgress *progress, GError **error)
+{
+    g_autoptr(FuDevice) dev = NULL;
+    fu_device_set_id(dev, "dummy-1:2:3");
+    fu_device_add_instance_id(dev, "2d47f29b-83a2-4f31-a2e8-63474f4d4c2e");
+    fu_device_set_version(dev, "1.2.3");
+    fu_device_get_version_lowest(dev, "1.2.2");
+    fu_device_get_version_bootloader(dev, "0.1.2");
+    fu_device_add_icon(dev, "computer");
+    fu_device_add_flag(dev, FWUPD_DEVICE_FLAG_UPDATABLE);
+    fu_plugin_add_device(plugin, dev);
+    return TRUE;
+}
+
+static void
+fu_foo_plugin_class_init(FuFooPluginClass *klass)
+{
+    …
+    plugin_class->coldplug = fu_foo_plugin_coldplug;
+    …
+}
+```
+
+### Key device properties
+
+<AccordionGroup>
+  <Accordion title="Device ID">
+    The device ID set with `fu_device_set_id()` must be unique across all plugins on the system. Including the plugin name as a prefix is a good convention, e.g. `"foo-1:2:3"`.
+  </Accordion>
+
+  <Accordion title="GUIDs and instance IDs">
+    GUIDs are generated automatically from instance IDs using `fu_device_add_instance_id()`. The GUID must match the `provides` value in the `.metainfo.xml` file for a firmware update to succeed. You can also add a raw GUID string directly as shown above.
+  </Accordion>
+
+  <Accordion title="Display name and icon">
+    Setting a display name and icon is important for GUI software. Icons can be specified as full paths, but icon theme names (e.g. `"computer"`, `"input-gaming"`, `"usb-hub"`) are preferred for most devices.
+  </Accordion>
+
+  <Accordion title="Device flags">
+    | Flag | Purpose |
+    |---|---|
+    | `FWUPD_DEVICE_FLAG_UPDATABLE` | Device is in a state where it can be updated |
+    | `FWUPD_DEVICE_FLAG_NEEDS_BOOTLOADER` | Device must be in bootloader mode to update |
+    | `FWUPD_DEVICE_FLAG_REQUIRE_AC` | Update is only allowed when AC power is available |
+    | `FWUPD_DEVICE_FLAG_WAIT_FOR_REPLUG` | fwupd waits for the device to reconnect after detach |
+
+    Consult the API documentation for the full list of flags.
+  </Accordion>
+
+  <Accordion title="Version constraints">
+    - `fu_device_set_version_lowest()` lets client software refuse downgrades that would break data migrations.
+    - `fu_device_set_version_bootloader()` allows firmware to depend on a minimum bootloader version, e.g. to deploy signed firmware only on hardware with a recent enough bootloader.
+  </Accordion>
+</AccordionGroup>
+
+### Setting the device version
+
+You can set the version directly as a string with `fu_device_set_version()`. For more flexibility, tell fwupd the version format and let it convert from a raw integer internally. This ensures the correct string is used even if the format changes at runtime via a quirk:
+
+```c
+static gchar *
+fu_foo_device_convert_version(FuDevice *device, guint64 version_raw)
+{
+    return fu_version_from_uint24(version_raw, FWUPD_VERSION_FORMAT_TRIPLET);
+}
+
+static void
+fu_foo_device_class_init(FuFooDeviceClass *klass)
+{
+    …
+    device_class->convert_version = fu_foo_device_convert_version;
+    …
+}
+```
+
+## Mechanism plugins
+
+When a plugin has created a device with `FWUPD_DEVICE_FLAG_UPDATABLE`, the daemon can update it with a `.cab` file. After compatibility checks the daemon calls the `write_firmware` vfunc:
+
+```c
+static gboolean
+fu_foo_plugin_write_firmware(FuPlugin *plugin,
+                             FuDevice *dev,
+                             GBytes *blob_fw,
+                             FuProgress *progress,
+                             FwupdInstallFlags flags,
+                             GError **error)
+{
+    gsize sz = 0;
+    guint8 *buf = g_bytes_get_data(blob_fw, &sz);
+    /* write 'buf' of size 'sz' to the hardware */
+    return TRUE;
+}
+
+static void
+fu_foo_plugin_class_init(FuFooPluginClass *klass)
+{
+    …
+    plugin_class->write_firmware = fu_foo_plugin_write_firmware;
+    …
+}
+```
+
+<Note>
+  `blob_fw` is the binary firmware file (e.g. a `.dfu` file), **not** the `.cab` archive. If `FWUPD_INSTALL_FLAG_FORCE` is set, you may relax normal checks — but never brick user hardware even if asked.
+</Note>
+
+## Policy helpers
+
+Use `prepare` and `cleanup` vfuncs to run actions before or after the firmware write. The daemon will call `cleanup` even if the update fails, so it is safe to put hardware back into a normal state there.
+
+```c
+static gboolean
+fu_foo_plugin_prepare(FuPlugin *plugin, FuDevice *device, GError **error)
+{
+    if (fu_device_has_flag(device, FWUPD_DEVICE_FLAG_REQUIRE_AC) && !on_ac_power()) {
+            g_set_error_literal(error,
+                                FWUPD_ERROR,
+                                FWUPD_ERROR_AC_POWER_REQUIRED,
+                                "Cannot install update "
+                                "when not on AC power");
+            return FALSE;
+    }
+    return TRUE;
+}
+
+static gboolean
+fu_foo_plugin_cleanup(FuPlugin *plugin, FuDevice *device, GError **error)
+{
+    return g_file_set_contents("/var/lib/fwupd/something",
+                               fu_device_get_id(device), -1, error);
+}
+
+static void
+fu_foo_plugin_class_init(FuFooPluginClass *klass)
+{
+    …
+    plugin_class->prepare = fu_foo_plugin_prepare;
+    plugin_class->cleanup = fu_foo_plugin_cleanup;
+    …
+}
+```
+
+<Tip>
+  Actions that must happen before the update belong in `prepare`. Actions that restore normal device state belong in `cleanup`. The daemon will recover the hardware if the update fails by calling `cleanup` regardless.
+</Tip>
+
+## Detaching to bootloader mode
+
+Some hardware can only be updated in a special bootloader mode.
+
+<AccordionGroup>
+  <Accordion title="detach — switch to bootloader mode">
+    Called before the firmware write to put the device into bootloader mode. If the device is already in bootloader mode, return early:
+
+    ```c
+    static gboolean
+    fu_foo_plugin_detach(FuPlugin *plugin, FuDevice *device, FuProgress *progress, GError **error)
+    {
+        if (hardware_in_bootloader)
+            return TRUE;
+        return _device_detach(device, progress, error);
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="attach — return to runtime mode">
+    Called after the update (or on failure) to switch the hardware back to runtime mode:
+
+    ```c
+    static gboolean
+    fu_foo_plugin_attach(FuPlugin *plugin, FuDevice *device, FuProgress *progress, GError **error)
+    {
+        if (!hardware_in_bootloader)
+            return TRUE;
+        return _device_attach(device, progress, error);
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="reload — read the new firmware version">
+    Called after attach to retrieve the new firmware version from the hardware:
+
+    ```c
+    static gboolean
+    fu_foo_plugin_reload(FuPlugin *plugin, FuDevice *device, GError **error)
+    {
+        g_autofree gchar *version = _get_version(plugin, device, error);
+        if (version == NULL)
+            return FALSE;
+        fu_device_set_version(device, version);
+        return TRUE;
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+Register all three in `class_init`:
+
+```c
+static void
+fu_foo_plugin_class_init(FuFooPluginClass *klass)
+{
+    …
+    plugin_class->detach = fu_foo_plugin_detach;
+    plugin_class->attach = fu_foo_plugin_attach;
+    plugin_class->reload = fu_foo_plugin_reload;
+    …
+}
+```
+
+<Note>
+  The `detach`, `attach`, and `reload` vfuncs are only called on the plugin currently registered to handle the device ID, even if the registered plugin changes during the attach/detach phases.
+</Note>
+
+## The set_progress vfunc
+
+The `set_progress` vfunc informs the daemon of the expected percentage breakdown for each update phase. The daemon runs `detach`, `write_firmware`, `attach`, and `reload` and scales progress output based on these values.
+
+For a device that takes 2 s to detach, 10 s to write, 7 s to attach, and 1 s to reload:
+
+```c
+fu_progress_set_id(progress, G_STRLOC);
+fu_progress_add_step(progress, FWUPD_STATUS_DEVICE_RESTART, 10, "detach");
+fu_progress_add_step(progress, FWUPD_STATUS_DEVICE_WRITE, 45, "write");
+fu_progress_add_step(progress, FWUPD_STATUS_DEVICE_RESTART, 40, "attach");
+fu_progress_add_step(progress, FWUPD_STATUS_DEVICE_BUSY, 5, "reload");
+```
+
+If your device does not use `detach` or `attach` and `reload` is instantaneous, you still must include all four steps with zero weight:
+
+```c
+fu_progress_set_id(progress, G_STRLOC);
+fu_progress_add_step(progress, FWUPD_STATUS_DEVICE_RESTART, 0, "detach");
+fu_progress_add_step(progress, FWUPD_STATUS_DEVICE_WRITE, 100, "write");
+fu_progress_add_step(progress, FWUPD_STATUS_DEVICE_RESTART, 0, "attach");
+fu_progress_add_step(progress, FWUPD_STATUS_DEVICE_BUSY, 0, "reload");
+```
+
+You can also split the write phase into sub-steps inside `write_firmware`:
+
+```c
+fu_progress_set_id(progress, G_STRLOC);
+fu_progress_add_step(progress, FWUPD_STATUS_DEVICE_RESTART, 5, "wait-for-idle");
+fu_progress_add_step(progress, FWUPD_STATUS_DEVICE_WRITE, 90, "write");
+fu_progress_add_step(progress, FWUPD_STATUS_DEVICE_RESTART, 5, "reset");
+```
+
+## The rustgen helper
+
+The rustgen script generates C source files for safely parsing, modifying, and querying packed structures and enumerations. Because fwupd parses untrusted structured data from devices and firmware files extensively, this tool abstracts common code and enforces best practices without requiring careful manual review of buffer reads and writes.
+
+Structures and enumerations are defined in `.rs` files — a format heavily inspired by Rust, which enables editor syntax highlighting. These files are **not** compiled by `rustc`.
+
+### Defining structs and enums
+
+```c
+#[derive(New, Validate, Parse, Default)]
+#[repr(C, packed)]
+struct FuExampleHdr {
+    magic: Guid,
+    hdrver: u8,
+    hdrsz: u16le = $struct_size,
+    payloadsz: u32le,
+    flags: u8,
+}
+
+#[derive(ToString, FromString)]
+#[repr(u8)] // optional, and only required if using the enum as a struct item type
+enum FuExampleFamily {
+    Unknown,
+    Sps,
+    Txe = 0x5,
+    Me,
+    Csme,
+}
+struct ExamplePacket {
+    family: FuExampleFamily = Csme,
+    data: [u8; 254],
+}
+```
+
+Supported field types include `u8`, `u16le`, `u24`, `u32le`, `u64be`, `char` (NUL-terminated string), `Guid`, and any enum or struct defined in the same `.rs` file. Arrays use `[type; count]` syntax.
+
+### Building with meson
+
+Add rustgen to your plugin's `meson.build`:
+
+```c
+diff --git a/plugins/example/meson.build b/plugins/example/meson.build
+@@ -3,7 +3,6 @@
+ plugin_quirks += files('example.quirk')
+ plugin_builtins += static_library('fu_plugin_example',
++  rustgen.process('fu-example.rs'),
+   sources:
+```
+
+This generates `fu-example-struct.c` and `fu-example-struct.h` in the build tree, which you include with:
+
+```c
+#include "fu-example-struct.h"
+```
+
+### Struct traits
+
+| Trait | Generated function |
+|---|---|
+| `New` | `fu_struct_example_new()` — create new instances |
+| `Validate` | `fu_struct_example_validate()` — check memory buffers are valid |
+| `Parse` | `fu_struct_example_parse()` — create a struct from a memory buffer |
+| `Getters` | `fu_struct_example_get_XXXX()` — get field values |
+| `Setters` | `fu_struct_example_set_XXXX()` — set field values |
+
+`Getters` is implied by `Parse`. `[Getters, Setters]` is implied by `New`.
+
+### Enum traits
+
+| Trait | Generated function |
+|---|---|
+| `ToString` | `fu_example_family_to_string()` |
+| `FromString` | `fu_example_family_from_string()` |
+| `Bitfield` | `ToString` and `FromString` treating values as bitfields |
+
+<Warning>
+  Constant fields (defined with `==`) never have getters or setters generated — they are constant by definition. They are verified during `_validate()` and `_parse()` however.
+</Warning>
+
+## Debugging a plugin
+
+Start the fwupd daemon with `--plugin-verbose=<plugin>` to set the environment variable `FWUPD_<PLUGIN>_VERBOSE=1` process-wide, enabling verbose debug output for that plugin without affecting others. For example:
+
+```bash
+fwupd --plugin-verbose=logitech_hidpp
+```
+
+sets `FWUPD_LOGITECH_HID_VERBOSE=1`.
+
+Use `--verbose` (and a second `--verbose` for even more detail) when running `fwupd` or `fwupdtool`.

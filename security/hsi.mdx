@@ -1,0 +1,175 @@
+---
+title: "Host Security ID (HSI)"
+description: "Understand and improve your system's firmware security posture using fwupd's HSI specification"
+---
+
+## What is HSI?
+
+Host Security ID (HSI) is a tiered firmware security rating developed by fwupd and the Linux Vendor Firmware Service (LVFS). It gives you an easy-to-understand score for the firmware security posture of your hardware — without needing specialized tools, extra hardware, or disabling any existing security protections.
+
+Not all hardware vendors prioritize secure firmware. Security costs money, and real-world security issues often only surface through external researcher disclosures that are too technical for most users to interpret. HSI translates those technical details into a single, actionable rating.
+
+### Why HSI instead of other tools?
+
+Tools like [Chipsec](https://github.com/chipsec/chipsec) can inspect hardware configuration, but they require disabling UEFI Secure Boot and loading unsigned kernel modules — actively weakening the security they are trying to measure. HSI only measures protections that you can verify without any of those trade-offs.
+
+<Tip>
+  HSI ratings are available in graphical tools built against `libfwupd` 1.8.4 or later, as well as via `fwupdmgr` on the command line.
+</Tip>
+
+## Who is HSI for?
+
+Different users have different security needs:
+
+| Audience | Recommended minimum |
+|---|---|
+| Home users | HSI:1 |
+| Corporate IT / managed devices | HSI:2 or above |
+| Journalists and security researchers | HSI:3 or above |
+| Highest-assurance environments | HSI:4 |
+
+If your system does not meet at least HSI:1, you should adjust your firmware settings, contact your hardware manufacturer, or consider replacing the hardware.
+
+## Checking your HSI score
+
+Run the following command to see your current HSI score and individual test results:
+
+```bash
+fwupdmgr security
+```
+
+To get the full output in machine-readable form:
+
+```bash
+fwupdmgr security --json
+```
+
+### Fixing security issues
+
+When `fwupdmgr security` reports a fixable failure, you can apply the recommended fix:
+
+```bash
+fwupdmgr security-fix
+```
+
+If a fix causes a regression, you can undo it:
+
+```bash
+fwupdmgr security-undo
+```
+
+Individual recommendations for each test failure are available from fwupd 1.8.4 onward.
+
+## HSI levels
+
+<Warning>
+  **HSI:0 — Insecure State**: This is the lowest possible rating. It means little or no firmware protection was detected, or at least one critical test in HSI:1 has failed. Any system at this level can potentially be modified from userspace. You should take immediate action to understand and address the failures.
+</Warning>
+
+<AccordionGroup>
+  <Accordion title="HSI:0 — Insecure State">
+    Limited or no firmware protection detected.
+
+    This is the default level assigned when no tests can be run, or when one or more tests required for HSI:1 have failed. A system at HSI:0 has no meaningful firmware security guarantees and is potentially vulnerable to modification from userspace.
+
+    **Action**: Run `fwupdmgr security` to identify which tests are failing and follow the recommendations.
+  </Accordion>
+
+  <Accordion title="HSI:1 — Critical State">
+    Basic protection present, but any failure would have critical security impact.
+
+    HSI:1 represents the most fundamental firmware security protections that security professionals consider essential. Any failure at this level could allow an attacker to compromise system firmware without physical access to the machine.
+
+    Reaching HSI:1 is the baseline goal for all consumer hardware. Home users who achieve this level have adequate protection for typical use cases.
+  </Accordion>
+
+  <Accordion title="HSI:2 — Risky State">
+    Firmware security issues that require a theoretical or lab-only exploit.
+
+    At this level, any known attack would be difficult or impractical to carry out in the real world. HSI:2 systems may employ additional technologies to protect the boot process against an attacker with local physical access to the machine.
+
+    Corporate IT departments should consider requiring HSI:2 or above for managed devices.
+  </Accordion>
+
+  <Accordion title="HSI:3 — Protected State">
+    The system firmware has only minor issues that do not affect overall security status.
+
+    HSI:3 corresponds to out-of-band protection of the system firmware, potentially including recovery capabilities. The firmware is protected even against sophisticated local attackers.
+
+    Security researchers and journalists handling sensitive information should aim for HSI:3 or above.
+  </Accordion>
+
+  <Accordion title="HSI:4 — Secure State">
+    Robust security with encryption and execution protection.
+
+    HSI:4 systems implement multiple layers of encryption and execution protection for the system firmware. This is the highest level currently achievable on shipping consumer hardware and represents a strong, well-rounded security posture.
+
+    Note: hardware meeting HSI:4 is typically more expensive than lower-rated alternatives.
+  </Accordion>
+
+  <Accordion title="HSI:5 — Secure Proven State (not yet achievable)">
+    Out-of-band attestation of the system firmware.
+
+    HSI:5 is defined in the specification but no tests have been implemented yet. No currently available hardware can reach this level. It is reserved for future attestation-based security mechanisms.
+  </Accordion>
+</AccordionGroup>
+
+## Level summary
+
+<CardGroup cols={3}>
+  <Card title="HSI:0" icon="shield-xmark">
+    Insecure State. No meaningful protections detected. Immediate action required.
+  </Card>
+  <Card title="HSI:1" icon="shield-halved">
+    Critical State. Basic essential protections present. Failure = critical impact.
+  </Card>
+  <Card title="HSI:2" icon="shield">
+    Risky State. Only theoretical lab exploits possible at this level.
+  </Card>
+  <Card title="HSI:3" icon="shield-check">
+    Protected State. Out-of-band firmware protection in place.
+  </Card>
+  <Card title="HSI:4" icon="shield-halved">
+    Secure State. Encryption and execution protection active.
+  </Card>
+  <Card title="HSI:5" icon="shield-heart">
+    Secure Proven State. No tests implemented yet.
+  </Card>
+</CardGroup>
+
+## The `!` runtime suffix
+
+The core HSI level reflects your hardware and firmware configuration and does not change while the OS is running. However, fwupd also monitors runtime security conditions. If a runtime security issue is detected, your score gains a `!` suffix — for example, `HSI:2!`.
+
+The following runtime conditions trigger the `!` suffix:
+
+- **UEFI Secure Boot is turned off.** Secure Boot is a fundamental protection against unauthorized boot code.
+- **The kernel is tainted.** A non-free module or a critical firmware issue has been loaded, which undermines the kernel's integrity guarantees.
+- **The kernel is not locked down.** The kernel lockdown security policy prevents certain privileged operations that could compromise firmware.
+- **Swap is unencrypted.** An unencrypted swap partition may expose sensitive data to offline attacks.
+- **fwupd is running with custom or modified plugins.** Non-upstream plugins reduce the trustworthiness of security measurements.
+
+<Note>
+  The `!` suffix does not change your numeric HSI level. It is an orthogonal indicator. A score of `HSI:2!` still means you passed all HSI:2 requirements — but a runtime issue is present that you should investigate. More details and debugging steps are available on the [fwupd wiki](https://github.com/fwupd/fwupd/wiki/Host-security-ID-runtime-issues).
+</Note>
+
+## Scope and platform support
+
+The current HSI test suite is primarily **x86 UEFI-centric**. The specification is designed for laptop and desktop hardware. Server and embedded hardware are not expected to publish an HSI number, though some tests may still apply.
+
+The test suite will expand to cover ARM and RISC-V firmware protections as those architectures develop verified firmware security mechanisms.
+
+Some security attributes depend on kernel measurements that are still being upstreamed, which means certain HSI level measurements may only be possible on systems running a sufficiently recent kernel.
+
+## How HSI is calculated
+
+fwupd calls a measurement method on each plugin. Each plugin adds security attributes based on direct hardware or kernel inspection. Some attributes can mark others as obsolete — for example, Intel BIOSGuard obsoletes the lower-level `org.intel.prx` attribute.
+
+The daemon exports a `HostSecurityId` property and a `GetHostSecurityAttrs()` method via D-Bus. GUI tools such as GNOME Control Center can display this value directly, and should show an alert color when the rating is below `HSI:1` or when the `!` suffix is present.
+
+## Intentional omissions
+
+Two technologies are explicitly excluded from the HSI test suite:
+
+- **Intel SGX** — excluded due to multiple high-severity security issues and low real-world adoption.
+- **Intel MPX** — removed from GCC and the Linux kernel in 2019 and now considered obsolete.

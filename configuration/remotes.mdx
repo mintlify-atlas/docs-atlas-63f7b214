@@ -1,0 +1,152 @@
+---
+title: "Remotes configuration"
+description: "Configure firmware metadata sources in /etc/fwupd/remotes.d/"
+---
+
+A **remote** is a source of firmware metadata and cabinet archives that fwupd uses to discover available updates. Each remote is defined by a `.conf` file and can point to the LVFS, a private server, or a local directory.
+
+## What is a remote?
+
+fwupd reads remote configuration files from two directories:
+
+```text
+/etc/fwupd/remotes.d/       # system-wide remotes
+/var/lib/fwupd/remotes.d/   # user or runtime remotes
+```
+
+The remote ID is derived from the filename. For example, the file `/etc/fwupd/remotes.d/lvfs.conf` has the remote ID `lvfs`.
+
+Each file uses an INI-style format:
+
+```ini
+[fwupd Remote]
+Enabled = true
+MetadataURI = https://cdn.fwupd.org/downloads/firmware.xml.gz
+```
+
+---
+
+## The LVFS remote
+
+fwupd ships with a pre-configured remote for the [Linux Vendor Firmware Service (LVFS)](https://fwupd.org), the primary public source of Linux firmware:
+
+```text
+/etc/fwupd/remotes.d/lvfs.conf
+```
+
+A separate testing remote (`lvfs-testing.conf`) provides access to firmware that is still undergoing testing and is not yet recommended for general use.
+
+<Warning>
+  Enable the LVFS testing remote only on non-production systems. Firmware in the testing channel has not been fully validated.
+</Warning>
+
+---
+
+## Enabling and disabling remotes
+
+You can manage remotes using `fwupdmgr` without editing files directly:
+
+```bash
+# List all configured remotes
+fwupdmgr get-remotes
+
+# Enable a remote
+fwupdmgr enable-remote lvfs
+
+# Disable a remote
+fwupdmgr disable-remote lvfs-testing
+```
+
+Alternatively, you can set `Enabled = true` or `Enabled = false` directly in the `.conf` file.
+
+<Tip>
+  After enabling a new remote, run `fwupdmgr refresh` to download its metadata.
+</Tip>
+
+---
+
+## Remote configuration parameters
+
+Each remote file contains a `[fwupd Remote]` section with the following parameters.
+
+<ParamField body="Enabled" type="boolean" default="false">
+  When `true`, this remote is included when fwupd searches for available updates and when running `fwupdmgr refresh`. Only enabled remotes are considered during device update checks.
+
+  You can change this value with `fwupdmgr enable-remote` or `fwupdmgr disable-remote`.
+</ParamField>
+
+<ParamField body="Title" type="string">
+  A short human-readable label for the remote, displayed in UI tools.
+</ParamField>
+
+<ParamField body="MetadataURI" type="string">
+  URL of the AppStream metadata to download. The URI must use `http://`, `https://`, or `file://`. Use `.xml.gz` for legacy metadata or `.xml.xz` for the modern format.
+</ParamField>
+
+<ParamField body="FirmwareBaseURI" type="string">
+  Optional base URL used to download firmware cabinet archives. If not set, fwupd uses the base URL from `MetadataURI`. Supported schemes are `http://`, `https://`, and `file://`.
+</ParamField>
+
+<ParamField body="ReportURI" type="string">
+  Endpoint for sending firmware update success reports. Leave blank to disable reporting for this remote.
+</ParamField>
+
+<ParamField body="ApprovalRequired" type="boolean" default="false">
+  When `true`, only firmware releases explicitly allow-listed via `fwupdmgr set-approved-firmware` will appear in CLI and GUI tools. This is useful in managed environments where you want to control which updates users can install.
+</ParamField>
+
+<ParamField body="AutomaticReports" type="boolean" default="false">
+  When `true`, fwupd automatically sends a success report to `ReportURI` after a firmware update completes for firmware obtained from this remote.
+</ParamField>
+
+<ParamField body="AutomaticSecurityReports" type="boolean" default="false">
+  When `true`, fwupd automatically sends an HSI platform security report when you run `fwupdmgr security`.
+</ParamField>
+
+<ParamField body="NoPhasedUpdates" type="boolean" default="false">
+  When `true`, fwupd ignores the phased deployment check for this remote. By default, fwupd uses a hash of `/etc/machine-id`, the archive filename, and the metadata cache modification time to determine whether a machine is eligible for a phased rollout.
+</ParamField>
+
+<ParamField body="OrderBefore" type="string">
+  Comma-separated list of remote IDs that this remote should be ordered before. When the same firmware release is available from multiple remotes, the remote with the highest priority is used.
+</ParamField>
+
+<ParamField body="OrderAfter" type="string">
+  Comma-separated list of remote IDs that this remote should be ordered after.
+</ParamField>
+
+<ParamField body="Username" type="string">
+  Username for HTTP Basic Authentication when downloading metadata or firmware from this remote, and when uploading success reports.
+</ParamField>
+
+<ParamField body="Password" type="string">
+  Password (or user token) for HTTP Basic Authentication when downloading metadata or firmware from this remote, and when uploading success reports.
+</ParamField>
+
+<ParamField body="RefreshInterval" type="number">
+  How often (in seconds) front-end tools should re-download the metadata signature. Set to `0` to re-download every time.
+</ParamField>
+
+---
+
+## Example: private remote
+
+To use an internal firmware server, create a new file in `/etc/fwupd/remotes.d/`:
+
+```ini
+[fwupd Remote]
+Enabled = true
+Title = Acme Internal Firmware
+MetadataURI = https://firmware.internal.example.com/metadata.xml.xz
+FirmwareBaseURI = https://firmware.internal.example.com/
+ReportURI =
+ApprovalRequired = false
+Username = fwupd
+Password = s3cr3t
+```
+
+After saving the file, refresh metadata to activate the remote:
+
+```bash
+fwupdmgr refresh
+```

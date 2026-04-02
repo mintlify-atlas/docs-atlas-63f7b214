@@ -1,0 +1,300 @@
+---
+title: "libfwupd API Reference"
+description: "Client library for interacting with the fwupd daemon from applications"
+---
+
+## Overview
+
+`libfwupd` is a stable C API and ABI client library used by GUI applications, command-line tools, and scripts to communicate with the fwupd daemon over D-Bus. It provides objects that mirror the daemon's data model — devices, releases, remotes, security attributes, and BIOS settings — plus an async client for all daemon operations.
+
+### Main header
+
+```c
+#include <fwupd.h>
+```
+
+This single header pulls in every public type, including `FwupdClient`, `FwupdDevice`, `FwupdRelease`, `FwupdRemote`, `FwupdSecurityAttr`, and `FwupdBiosSetting`.
+
+---
+
+## Key classes
+
+<AccordionGroup>
+  <Accordion title="FwupdClient — daemon connection and operations">
+    `FwupdClient` is the entry point for all daemon communication. Create one with `fwupd_client_new()`, connect asynchronously, then call any of the operation methods.
+
+    **Connection**
+
+    | Method | Description |
+    |---|---|
+    | `fwupd_client_new()` | Create a new client instance |
+    | `fwupd_client_connect_async()` / `fwupd_client_connect_finish()` | Connect to the daemon |
+    | `fwupd_client_disconnect()` | Disconnect from the daemon |
+    | `fwupd_client_get_daemon_version()` | Get the running daemon version string |
+
+    **Devices**
+
+    | Method | Description |
+    |---|---|
+    | `fwupd_client_get_devices_async()` / `fwupd_client_get_devices_finish()` | List all devices |
+    | `fwupd_client_get_device_by_id_async()` / `fwupd_client_get_device_by_id_finish()` | Look up a device by ID |
+    | `fwupd_client_get_devices_by_guid_async()` / `fwupd_client_get_devices_by_guid_finish()` | Look up devices by GUID |
+    | `fwupd_client_get_history_async()` / `fwupd_client_get_history_finish()` | Get update history |
+    | `fwupd_client_modify_device_async()` / `fwupd_client_modify_device_finish()` | Modify a device property |
+
+    **Updates**
+
+    | Method | Description |
+    |---|---|
+    | `fwupd_client_get_upgrades_async()` / `fwupd_client_get_upgrades_finish()` | Get available upgrades for a device |
+    | `fwupd_client_get_downgrades_async()` / `fwupd_client_get_downgrades_finish()` | Get available downgrades |
+    | `fwupd_client_get_releases_async()` / `fwupd_client_get_releases_finish()` | Get all releases for a device |
+    | `fwupd_client_install_async()` / `fwupd_client_install_finish()` | Install firmware from a file |
+    | `fwupd_client_install_bytes_async()` / `fwupd_client_install_bytes_finish()` | Install firmware from a `GBytes` buffer |
+    | `fwupd_client_install_release_async()` / `fwupd_client_install_release_finish()` | Install a specific `FwupdRelease` |
+    | `fwupd_client_verify_async()` / `fwupd_client_verify_finish()` | Verify device firmware checksum |
+    | `fwupd_client_activate_async()` / `fwupd_client_activate_finish()` | Activate a staged update |
+
+    **Remotes**
+
+    | Method | Description |
+    |---|---|
+    | `fwupd_client_get_remotes_async()` / `fwupd_client_get_remotes_finish()` | List configured remotes |
+    | `fwupd_client_get_remote_by_id_async()` / `fwupd_client_get_remote_by_id_finish()` | Look up a remote by ID |
+    | `fwupd_client_refresh_remote_async()` / `fwupd_client_refresh_remote_finish()` | Refresh a remote's metadata |
+    | `fwupd_client_modify_remote_async()` / `fwupd_client_modify_remote_finish()` | Modify a remote property |
+
+    **BIOS settings**
+
+    | Method | Description |
+    |---|---|
+    | `fwupd_client_get_bios_settings_async()` / `fwupd_client_get_bios_settings_finish()` | List BIOS settings |
+    | `fwupd_client_modify_bios_setting_async()` / `fwupd_client_modify_bios_setting_finish()` | Change one or more BIOS settings |
+
+    **Security attributes (HSI)**
+
+    | Method | Description |
+    |---|---|
+    | `fwupd_client_get_host_security_attrs_async()` / `fwupd_client_get_host_security_attrs_finish()` | Get all HSI attributes |
+    | `fwupd_client_get_host_security_id()` | Get the current HSI level string |
+    | `fwupd_client_fix_host_security_attr_async()` / `fwupd_client_fix_host_security_attr_finish()` | Apply a fix for a security attribute |
+    | `fwupd_client_undo_host_security_attr_async()` / `fwupd_client_undo_host_security_attr_finish()` | Undo a security attribute fix |
+
+    **Emulation**
+
+    | Method | Description |
+    |---|---|
+    | `fwupd_client_emulation_load_async()` / `fwupd_client_emulation_load_finish()` | Load emulation data from a file |
+    | `fwupd_client_emulation_save_async()` / `fwupd_client_emulation_save_finish()` | Save emulation data to a file |
+  </Accordion>
+
+  <Accordion title="FwupdDevice — device properties">
+    `FwupdDevice` represents a device as seen by the daemon. You receive instances from `fwupd_client_get_devices_finish()` and related calls; you do not normally construct them directly in client code.
+
+    | Method | Description |
+    |---|---|
+    | `fwupd_device_get_id()` | Unique device identifier (SHA-1 hash) |
+    | `fwupd_device_get_name()` | Human-readable device name |
+    | `fwupd_device_get_vendor()` | Vendor name string |
+    | `fwupd_device_get_version()` | Current firmware version string |
+    | `fwupd_device_get_version_lowest()` | Lowest version the device can be downgraded to |
+    | `fwupd_device_get_version_bootloader()` | Bootloader version string |
+    | `fwupd_device_get_version_format()` | Version format (`FwupdVersionFormat`) |
+    | `fwupd_device_get_flags()` | Device flags bitfield |
+    | `fwupd_device_has_flag()` | Test a specific `FwupdDeviceFlags` bit |
+    | `fwupd_device_get_guids()` | Array of GUID strings |
+    | `fwupd_device_get_guid_default()` | Primary GUID |
+    | `fwupd_device_get_protocols()` | Array of update protocol strings |
+    | `fwupd_device_get_plugin()` | Plugin name that owns this device |
+    | `fwupd_device_get_releases()` | Array of `FwupdRelease` objects |
+    | `fwupd_device_get_release_default()` | The default (best) release for updating |
+    | `fwupd_device_get_parent()` | Parent device (for composite devices) |
+    | `fwupd_device_get_children()` | Child devices |
+    | `fwupd_device_get_update_state()` | Current update state (`FwupdUpdateState`) |
+    | `fwupd_device_get_update_error()` | Last update error string, if any |
+    | `fwupd_device_get_battery_level()` | Device battery level (0–100, or `FWUPD_BATTERY_LEVEL_INVALID`) |
+    | `fwupd_device_get_install_duration()` | Expected install time in seconds |
+  </Accordion>
+
+  <Accordion title="FwupdRelease — release properties">
+    `FwupdRelease` describes an available firmware update for a device.
+
+    | Method | Description |
+    |---|---|
+    | `fwupd_release_get_version()` | Release version string |
+    | `fwupd_release_get_description()` | HTML release notes |
+    | `fwupd_release_get_locations()` | Array of download URLs (use instead of old `get_uri`) |
+    | `fwupd_release_get_checksums()` | Array of checksum strings |
+    | `fwupd_release_get_filename()` | Suggested filename for the download |
+    | `fwupd_release_get_size()` | Firmware download size in bytes |
+    | `fwupd_release_get_flags()` | Release flags (`FwupdReleaseFlags`) |
+    | `fwupd_release_get_remote_id()` | ID of the remote that provided this release |
+    | `fwupd_release_get_appstream_id()` | AppStream component ID |
+    | `fwupd_release_get_install_duration()` | Expected install time in seconds |
+  </Accordion>
+
+  <Accordion title="FwupdRemote — remote metadata sources">
+    `FwupdRemote` represents a metadata source such as LVFS.
+
+    | Method | Description |
+    |---|---|
+    | `fwupd_remote_get_id()` | Remote identifier string |
+    | `fwupd_remote_has_flag()` | Test flags (replaces old `get_enabled`, `get_approval_required`, etc.) |
+    | `fwupd_remote_get_metadata_uri()` | URI to the remote's metadata file |
+    | `fwupd_remote_get_metadata_uri_sig()` | URI to the metadata signature |
+    | `fwupd_remote_build_firmware_uri()` | Build a full download URI for a firmware path |
+    | `fwupd_remote_get_checksum_sig()` | Signature checksum |
+  </Accordion>
+
+  <Accordion title="FwupdSecurityAttr — HSI security attributes">
+    `FwupdSecurityAttr` describes a single Host Security ID (HSI) check result.
+
+    | Method | Description |
+    |---|---|
+    | `fwupd_security_attr_get_appstream_id()` | Unique AppStream ID for this attribute |
+    | `fwupd_security_attr_get_level()` | HSI level (1–5) |
+    | `fwupd_security_attr_get_flags()` | Attribute flags |
+    | `fwupd_security_attr_get_result()` | Pass/fail result (`FwupdSecurityAttrResult`) |
+    | `fwupd_security_attr_get_name()` | Human-readable attribute name |
+    | `fwupd_security_attr_get_description()` | Description string |
+    | `fwupd_security_attr_get_url()` | URL for remediation information |
+  </Accordion>
+
+  <Accordion title="FwupdBiosSetting — BIOS/UEFI settings">
+    `FwupdBiosSetting` represents a BIOS attribute exposed via the kernel's BIOS attribute interface.
+
+    | Method | Description |
+    |---|---|
+    | `fwupd_bios_setting_get_name()` | Setting name |
+    | `fwupd_bios_setting_get_description()` | Human-readable description |
+    | `fwupd_bios_setting_get_current_value()` | Current value string |
+    | `fwupd_bios_setting_get_possible_values()` | Array of accepted value strings |
+    | `fwupd_bios_setting_get_kind()` | Setting type (`FwupdBiosSettingKind`) |
+    | `fwupd_bios_setting_get_read_only()` | Whether the setting is read-only |
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Async API pattern
+
+All daemon operations follow the GLib async pattern: call the `_async` variant with a `GAsyncReadyCallback`, then call the matching `_finish` function inside the callback to retrieve the result or `GError`.
+
+```c
+static void
+on_devices_ready(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+    FwupdClient *client = FWUPD_CLIENT(source);
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GPtrArray) devices = fwupd_client_get_devices_finish(client, res, &error);
+    if (devices == NULL) {
+        g_printerr("Error: %s\n", error->message);
+        return;
+    }
+    for (guint i = 0; i < devices->len; i++) {
+        FwupdDevice *dev = g_ptr_array_index(devices, i);
+        g_print("%s: %s\n", fwupd_device_get_name(dev), fwupd_device_get_version(dev));
+    }
+}
+```
+
+---
+
+## Example: connecting and listing devices
+
+```c
+#include <fwupd.h>
+
+static void
+on_connected(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+    FwupdClient *client = FWUPD_CLIENT(source);
+    GMainLoop *loop = user_data;
+    g_autoptr(GError) error = NULL;
+
+    if (!fwupd_client_connect_finish(client, res, &error)) {
+        g_printerr("Failed to connect: %s\n", error->message);
+        g_main_loop_quit(loop);
+        return;
+    }
+    g_print("Connected to fwupd %s\n", fwupd_client_get_daemon_version(client));
+
+    /* kick off a device listing */
+    fwupd_client_get_devices_async(client, NULL, on_devices_ready, loop);
+}
+
+static void
+on_devices_ready(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+    FwupdClient *client = FWUPD_CLIENT(source);
+    GMainLoop *loop = user_data;
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GPtrArray) devices = fwupd_client_get_devices_finish(client, res, &error);
+
+    if (devices == NULL) {
+        g_printerr("Error: %s\n", error->message);
+    } else {
+        for (guint i = 0; i < devices->len; i++) {
+            FwupdDevice *dev = g_ptr_array_index(devices, i);
+            g_print("  %s (%s)\n",
+                    fwupd_device_get_name(dev),
+                    fwupd_device_get_version(dev));
+        }
+    }
+    g_main_loop_quit(loop);
+}
+
+int
+main(void)
+{
+    g_autoptr(GMainLoop) loop = g_main_loop_new(NULL, FALSE);
+    g_autoptr(FwupdClient) client = fwupd_client_new();
+
+    fwupd_client_connect_async(client, NULL, on_connected, loop);
+    g_main_loop_run(loop);
+    return 0;
+}
+```
+
+---
+
+## Migration notes
+
+### From 1.9.x to 2.x
+
+| Old API | New API |
+|---|---|
+| `fwupd_build_machine_id()` | `fwupd_client_get_host_machine_id()` |
+| `fwupd_build_history_report_json()` | `fwupd_client_build_report_history()` |
+| `fwupd_get_os_release()` | `fwupd_client_get_report_metadata()` |
+| `fwupd_device_get_update_message()` | Removed — drop use |
+| `fwupd_device_get_update_image()` | Removed — drop use |
+| `FWUPD_DEVICE_FLAG_ONLY_OFFLINE` | Removed — drop use |
+
+Note: `fwupd_client_emulation_load()` and `fwupd_client_emulation_save()` now take a file path rather than returning or accepting bytes.
+
+### From 1.x to 2.x
+
+| Old API | New API |
+|---|---|
+| `fwupd_client_install_release2()` | `fwupd_client_install_release()` |
+| `fwupd_client_refresh_remote2()` | `fwupd_client_refresh_remote()` |
+| `fwupd_remote_get_enabled()` | `fwupd_remote_has_flag()` |
+| `fwupd_remote_get_approval_required()` | `fwupd_remote_has_flag()` |
+| `fwupd_device_get_protocol()` | `fwupd_device_get_protocols()` |
+| `fwupd_device_get_vendor_id()` | `fwupd_device_get_vendor_ids()` |
+| `fwupd_release_get_uri()` | `fwupd_release_get_locations()` |
+| `fwupd_release_get_trust_flags()` | `fwupd_release_get_flags()` |
+| `fwupd_client_get_updates()` | `fwupd_client_get_upgrades()` |
+| `soup-session` property | Removed from `FwupdClient` |
+
+### From 0.9.x
+
+| Old API | New API |
+|---|---|
+| `FU_DEVICE_FLAG_*` | `FWUPD_DEVICE_FLAG_*` |
+| `FWUPD_DEVICE_FLAG_ALLOW_ONLINE` | `FWUPD_DEVICE_FLAG_UPDATABLE` |
+| `fwupd_client_get_devices_simple()` | `fwupd_client_get_devices()` |
+| `fwupd_remote_get_uri()` | `fwupd_remote_get_metadata_uri()` |
+| `fwupd_result_update_*()` | `fwupd_release_*()` |
+| `fwupd_result_*()` | `fwupd_device_*()` |

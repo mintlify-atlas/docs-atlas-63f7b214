@@ -1,0 +1,255 @@
+---
+title: "Firmware Types"
+description: "Base firmware classes and how to implement custom firmware parsers"
+---
+
+## Overview
+
+Every firmware object in fwupd is a subclass of `FuFirmware`. The base class handles common operations — holding binary payload, managing child firmware images, and generating checksums. You subclass it and override only the vfuncs your firmware format requires.
+
+Before implementing a new firmware type, check whether one of the existing standard types already handles your format or can be extended.
+
+## Standard firmware types
+
+<CardGroup cols={2}>
+  <Card title="FuIhexFirmware" icon="file-code">
+    Intel HEX format (`.hex`). Parses HEX records into addressed segments.
+  </Card>
+  <Card title="FuDfuFirmware" icon="usb">
+    USB Device Firmware Upgrade (DFU) format. Handles DFU suffix and target images.
+  </Card>
+  <Card title="FuSrecFirmware" icon="file">
+    Motorola S-record format (`.srec`). Parses S0–S9 records into addressed segments.
+  </Card>
+  <Card title="FuCabFirmware" icon="archive">
+    Cabinet archive format (`.cab`). The outer container format used by LVFS firmware releases.
+  </Card>
+  <Card title="FuZipFirmware" icon="file-zip">
+    ZIP archive format. For plugins that distribute firmware inside ZIP files.
+  </Card>
+  <Card title="FuFdtFirmware" icon="binary">
+    Flattened Device Tree (FDT/DTB) format. For platforms that use device trees.
+  </Card>
+  <Card title="FuElfFirmware" icon="file-code">
+    ELF binary format. For plugins that work with compiled ELF firmware images.
+  </Card>
+</CardGroup>
+
+## Implementing a custom firmware type
+
+A firmware class implements a set of optional vfuncs depending on what operations it needs to support. The complete set is in `libfwupdplugin/fu-firmware.h`.
+
+<AccordionGroup>
+  <Accordion title="parse — deserialize binary data">
+    Parses a firmware file passed as a byte sequence. If your firmware format has a custom header, structured fields, or multiple embedded images, implement `parse` to process the format and populate the `FuFirmware` object.
+
+    If `parse` is not implemented, the entire data blob is used as-is.
+
+    ```c
+    static gboolean
+    fu_foo_firmware_parse(FuFirmware *firmware,
+                          GInputStream *stream,
+                          FuFirmwareParseFlags flags,
+                          GError **error)
+    {
+        /* call parent class parse first, then do custom processing */
+        if (!FU_FIRMWARE_CLASS(fu_foo_firmware_parent_class)->parse(firmware, stream, flags, error))
+            return FALSE;
+        /* get the raw bytes and do vendor-specific parsing */
+        GBytes *blob = fu_firmware_get_bytes(firmware, error);
+        if (blob == NULL)
+            return FALSE;
+        /* ... */
+        return TRUE;
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="write — serialize to bytes">
+    Returns the `FuFirmware` object as a byte sequence. Used to output firmware read with `fu_device_read_firmware()` as a binary blob.
+
+    ```c
+    static GBytes *
+    fu_foo_firmware_write(FuFirmware *firmware, GError **error)
+    {
+        /* serialize the firmware object back to bytes */
+        /* ... */
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="export — convert to XML">
+    Converts the `FuFirmware` object to an XML representation. If not implemented, the default generates XML containing generic attributes and optionally the firmware data and child nodes.
+
+    This is useful for testing: you can call `fwupdtool firmware-parse` to verify your `parse` implementation produces correct output.
+
+    ```c
+    static void
+    fu_foo_firmware_export(FuFirmware *firmware,
+                           FuFirmwareExportFlags flags,
+                           XbBuilderNode *bn)
+    {
+        /* add vendor-specific XML attributes */
+        xb_builder_node_set_attr(bn, "vendor-field", value);
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="tokenize — break into records">
+    If implemented, breaks the firmware into records before `parse` processes them. This is useful for line-oriented formats like Intel HEX or Motorola S-record, where the file is first split into records.
+  </Accordion>
+
+  <Accordion title="build — reconstruct from XML">
+    The reverse of `export`. Builds a `FuFirmware` object from an XML representation. Implement this if you want to construct firmware objects from XML (e.g. for testing or tooling).
+  </Accordion>
+
+  <Accordion title="get_checksum — custom checksum computation">
+    The default implementation computes a checksum of the firmware payload bytes. Override this only if your firmware format uses a non-standard checksum algorithm.
+
+    ```c
+    static gchar *
+    fu_foo_firmware_get_checksum(FuFirmware *firmware,
+                                 GChecksumType csum_kind,
+                                 GError **error)
+    {
+        /* compute and return firmware-specific checksum */
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Extending an existing firmware type
+
+The most common case is extending an existing type to handle vendor-specific additions. For example, if your firmware files are Intel HEX files with optional vendor-specific sections at fixed addresses, you can subclass `FuIhexFirmware`:
+
+```c
+/* fu-foo-firmware.c — extends FuIhexFirmware */
+
+static gboolean
+fu_foo_firmware_parse(FuFirmware *firmware,
+                      GInputStream *stream,
+                      FuFirmwareParseFlags flags,
+                      GError **error)
+{
+    /* call the parent class parse method to handle standard HEX parsing */
+    if (!FU_FIRMWARE_CLASS(fu_foo_firmware_parent_class)->parse(firmware, stream, flags, error))
+        return FALSE;
+
+    /* get the parsed data and do vendor-specific processing */
+    GBytes *blob = fu_firmware_get_bytes(firmware, error);
+    if (blob == NULL)
+        return FALSE;
+
+    /* process vendor-specific sections at fixed addresses */
+    /* ... */
+
+    return TRUE;
+}
+
+static void
+fu_foo_firmware_class_init(FuFooFirmwareClass *klass)
+{
+    FuFirmwareClass *firmware_class = FU_FIRMWARE_CLASS(klass);
+    firmware_class->parse = fu_foo_firmware_parse;
+}
+```
+
+<Tip>
+  See `fu-analogix-firmware.c` in the `analogix` plugin for a real-world example of extending `FuIhexFirmware` with vendor-specific HEX sections.
+</Tip>
+
+## Testing firmware parsing
+
+Use `fwupdtool` to test your firmware parser without running a full update. The `export` vfunc output lets you verify that parsing and processing are correct:
+
+```bash
+fwupdtool firmware-parse --plugins <plugin> <firmware_file> <firmware_type>
+```
+
+For example:
+
+```bash
+fwupdtool firmware-parse --plugins foo foo-v1.2.3.hex FuFooFirmware
+```
+
+This calls your `parse` vfunc, then `export`, and prints the resulting XML. Check that all fields parsed correctly before testing with real hardware.
+
+## The rustgen tool for struct parsing
+
+The rustgen tool is the recommended way to define and parse binary structures in firmware files. It generates endian-safe, bounds-checked C code from a Rust-like struct definition.
+
+Define your firmware header structure in a `.rs` file:
+
+```c
+#[derive(New, Validate, Parse, Default)]
+#[repr(C, packed)]
+struct FuExampleHdr {
+    magic: Guid,
+    hdrver: u8,
+    hdrsz: u16le = $struct_size,
+    payloadsz: u32le,
+    flags: u8,
+}
+```
+
+The generated code provides:
+- `fu_struct_example_hdr_parse()` — create a struct from a memory buffer, validating constant fields
+- `fu_struct_example_hdr_get_payloadsz()` — get the payload size field
+- `fu_struct_example_hdr_validate()` — check a buffer against constant constraints
+- Offset constants: `FU_STRUCT_EXAMPLE_HDR_OFFSET_MAGIC`, `FU_STRUCT_EXAMPLE_HDR_OFFSET_HDRSZ`, etc.
+- Size constants: `FU_STRUCT_EXAMPLE_HDR_SIZE`
+
+Add rustgen to your plugin's `meson.build`:
+
+```c
+plugin_builtins += static_library('fu_plugin_foo',
+  rustgen.process('fu-foo.rs'),
+  sources: [
+    'fu-foo-firmware.c',
+    ...
+  ],
+  ...
+)
+```
+
+Then include the generated header in your firmware source:
+
+```c
+#include "fu-foo-struct.h"
+```
+
+<Note>
+  See [Plugin Tutorial — The rustgen helper](/plugin-dev/tutorial#the-rustgen-helper) for the full reference on supported types, traits, and array syntax.
+</Note>
+
+## Registering the firmware type
+
+To associate a firmware GType with a device so that `prepare_firmware` uses it automatically, call `fu_device_set_firmware_gtype()` in the device's `init` or `constructed` function:
+
+```c
+static void
+fu_foo_device_init(FuFooDevice *self)
+{
+    fu_device_set_firmware_gtype(FU_DEVICE(self), FU_TYPE_FOO_FIRMWARE);
+}
+```
+
+When a firmware GType is set and the firmware can be parsed as a single image, implementing `check_firmware()` is usually better than `prepare_firmware()`:
+
+```c
+static gboolean
+fu_foo_device_check_firmware(FuDevice *device,
+                             FuFirmware *firmware,
+                             FuFirmwareParseFlags flags,
+                             GError **error)
+{
+    /* firmware is already parsed as FuFooFirmware — validate it */
+    FuFooFirmware *foo_fw = FU_FOO_FIRMWARE(firmware);
+    if (fu_foo_firmware_get_target_model(foo_fw) != fu_foo_device_get_model(FU_FOO_DEVICE(device))) {
+        g_set_error_literal(error, FWUPD_ERROR, FWUPD_ERROR_INVALID_FILE,
+                            "firmware is not for this device model");
+        return FALSE;
+    }
+    return TRUE;
+}
+```

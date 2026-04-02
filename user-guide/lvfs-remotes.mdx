@@ -1,0 +1,179 @@
+---
+title: "LVFS & Remotes"
+description: "How fwupd fetches firmware metadata from the Linux Vendor Firmware Service and other remotes"
+---
+
+## What is the LVFS?
+
+The [Linux Vendor Firmware Service (LVFS)](https://fwupd.org/) is a centralized firmware distribution platform at `fwupd.org`. Hardware vendors and OEMs publish signed firmware updates there, making them available to Linux users through fwupd.
+
+fwupd is configured to use the LVFS by default. When you run `fwupdmgr refresh`, fwupd downloads the latest firmware metadata from the LVFS. When you run `fwupdmgr update`, it downloads and installs any firmware releases the LVFS has for your hardware.
+
+<Note>
+  Firmware published on the LVFS is signed by the vendor. fwupd verifies these signatures before installing anything.
+</Note>
+
+---
+
+## What are remotes?
+
+A **remote** is a configured metadata source — a location where fwupd looks for firmware releases. Each remote is described by a configuration file in `/etc/fwupd/remotes.d/` (or `/var/lib/fwupd/remotes.d/` for user-level remotes).
+
+The filename without the extension is used as the remote ID. For example, `/etc/fwupd/remotes.d/lvfs.conf` has the ID `lvfs`.
+
+### Remote configuration file format
+
+Remote files use a simple INI-style format:
+
+```text
+[fwupd Remote]
+Enabled=true
+Title=Linux Vendor Firmware Service
+MetadataURI=https://cdn.fwupd.org/downloads/firmware.xml.xz
+ReportURI=https://fwupd.org/lvfs/firmware/report
+AutomaticReports=false
+ApprovalRequired=false
+```
+
+### Key remote parameters
+
+| Parameter | Default | Description |
+| --------- | ------- | ----------- |
+| `Enabled` | `false` | Whether fwupd uses this remote for updates and refresh |
+| `Title` | — | Human-readable name shown in UI tools |
+| `MetadataURI` | — | URL of the AppStream metadata (`.xml.gz` or `.xml.xz`) |
+| `FirmwareBaseURI` | — | Optional base URL for cabinet archives; falls back to `MetadataURI` base if not set |
+| `ApprovalRequired` | `false` | If `true`, only allow-listed checksums are installable from this remote |
+| `ReportURI` | — | Endpoint for uploading update success reports |
+| `AutomaticReports` | `false` | If `true`, automatically send success reports after updates |
+| `AutomaticSecurityReports` | `false` | If `true`, automatically send HSI reports when running `fwupdmgr security` |
+| `NoPhasedUpdates` | `false` | If `true`, ignore phased rollout eligibility checks |
+| `OrderBefore` | — | Comma-delimited list of remote IDs that this remote should be sorted before |
+| `OrderAfter` | — | Comma-delimited list of remote IDs that this remote should be sorted after |
+| `Username` | — | Username for BASIC authentication |
+| `Password` | — | Password or token for BASIC authentication |
+| `RefreshInterval` | system default | Seconds between metadata re-downloads; `0` means re-download every time |
+
+<Note>
+  When the same firmware release is available from multiple remotes, fwupd uses the one with the highest priority (determined by `OrderBefore` / `OrderAfter`).
+</Note>
+
+---
+
+## Managing remotes
+
+### Typical update workflow
+
+<Steps>
+  <Step title="Refresh metadata">
+    Download the latest firmware metadata from all enabled remotes.
+
+    ```bash
+    fwupdmgr refresh
+    ```
+  </Step>
+  <Step title="Check for updates">
+    See which devices have firmware updates available.
+
+    ```bash
+    fwupdmgr get-updates
+    ```
+  </Step>
+  <Step title="Apply updates">
+    Download and install all available updates. You will be prompted for confirmation.
+
+    ```bash
+    fwupdmgr update
+    ```
+
+    Some updates apply immediately; others are staged and take effect on the next reboot.
+  </Step>
+</Steps>
+
+### Remote management commands
+
+**List all remotes**
+
+```bash
+fwupdmgr get-remotes
+```
+
+This shows every configured remote, including those that are disabled.
+
+**Enable a remote**
+
+```bash
+fwupdmgr enable-remote lvfs-testing
+```
+
+**Disable a remote**
+
+Disabling a remote prevents it from being refreshed or considered for updates, but does not delete its local metadata cache.
+
+```bash
+fwupdmgr disable-remote lvfs-testing
+```
+
+**Modify a remote setting**
+
+```bash
+fwupdmgr modify-remote <remote-id> <key> <value>
+```
+
+For example, to enable a remote:
+
+```bash
+fwupdmgr modify-remote lvfs Enabled true
+```
+
+**Delete cached metadata**
+
+```bash
+fwupdmgr clean-remote lvfs
+```
+
+---
+
+## Automatic update reporting
+
+The LVFS uses update success and failure reports to give vendors data about how well their firmware updates are working in the field. You can opt in to automatic reporting on a per-remote basis.
+
+To enable automatic reporting for the LVFS remote:
+
+```bash
+fwupdmgr modify-remote lvfs AutomaticReports true
+```
+
+To report manually at any time:
+
+```bash
+fwupdmgr report-history
+```
+
+To export a report for offline upload:
+
+```bash
+fwupdmgr report-export report.json
+```
+
+<Tip>
+  Reporting is optional but encouraged. It helps vendors and LVFS administrators understand real-world update reliability and fix issues faster.
+</Tip>
+
+---
+
+## Passim: peer-to-peer metadata sharing
+
+If the [Passim](https://github.com/hughsie/passim) project is installed alongside fwupd, fwupd will re-publish downloaded metadata files over the local network on port `27500` by default. Other machines on the same network can discover and use this cached metadata via mDNS/LLMNR, reducing repeated downloads from the LVFS.
+
+To disable peer-to-peer sharing, set `P2pPolicy=none` in `/etc/fwupd/fwupd.conf`:
+
+```bash
+fwupdmgr modify-config daemon P2pPolicy none
+```
+
+Alternatively, you can mask the Passim service directly:
+
+```bash
+systemctl mask passim.service
+```
